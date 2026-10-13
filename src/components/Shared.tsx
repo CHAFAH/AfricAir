@@ -92,6 +92,7 @@ export function FareSummary({ fare, children }: { fare: FareBreakdown; children?
     </div>)}
     <div className="price-line"><span>{t.baseFare}</span><strong>{money(fare.base)}</strong></div>
     <div className="price-line"><span>{t.taxes}</span><strong>{money(fare.taxes)}</strong></div>
+    {fare.discount && <div className="price-line discount-line"><span>{t.promoCode} {fare.discount.code} (−{fare.discount.percent}%)</span><strong>− {money(fare.discount.amountUsd)}</strong></div>}
     <div className="price-line"><span>{t.service}</span><strong>{money(fare.service)}</strong></div>
     <div className="price-total"><span>{t.total}</span><strong data-testid="fare-total">{money(fare.total)}</strong></div>
     {children}

@@ -88,4 +88,13 @@ describe('pricing', () => {
     expect(fare.total).toBe(fare.base + fare.taxes + fare.service)
     expect(fare.base).toBe(fare.lines.reduce((sum, line) => sum + line.fareEach * line.count, 0))
   })
+
+  it('uses the configured service fee and discounts only the base fare', () => {
+    const [outbound] = generateItineraries('NBO', 'LOS', date, 'economy')
+    const plain = priceBooking(outbound, undefined, { adults: 1, children: 0, infants: 0 }, 0)
+    const promo = priceBooking(outbound, undefined, { adults: 1, children: 0, infants: 0 }, 0, { code: 'SAVE10', percent: 10 })
+    expect(plain.service).toBe(0)
+    expect(promo.discount).toEqual({ code: 'SAVE10', percent: 10, amountUsd: Math.round(plain.base * 10) / 100 })
+    expect(promo.total).toBeCloseTo(plain.total - plain.base * 0.1, 2)
+  })
 })

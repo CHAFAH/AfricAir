@@ -1,16 +1,18 @@
 import { useCallback, useEffect, useMemo, useState } from 'react'
-import { Plane } from 'lucide-react'
+import { Activity, Plane } from 'lucide-react'
 import { Destinations } from './components/Destinations'
-import { Header } from './components/Header'
+import { BrandName, Header } from './components/Header'
 import { Home } from './components/Home'
 import { Results } from './components/Results'
 import { Review } from './components/Review'
+import { AdminPage, AnnouncementBar, EnvironmentBanner, StatusPage } from './components/Runtime'
 import { Travellers } from './components/Travellers'
 import { Confirmation, TripDetail, Trips } from './components/Trips'
 import { AppContext, useApp, type AppContextValue } from './context'
 import { AIRPORT_BY_CODE } from './data/airports'
-import { findCurrency, formatMoney } from './data/currencies'
+import { CURRENCIES, findCurrency, formatMoney } from './data/currencies'
 import { TRANSLATIONS } from './i18n'
+import { DEFAULT_CONFIG, cancelRemoteBooking, fetchConfig, findRemoteBooking, saveRemoteBooking, type RuntimeConfig } from './lib/api'
 import { loadBookings, makeReference, makeTicketNumber, removeBooking, saveBooking, updateBooking } from './lib/bookings'
 import { addDays, formatDate, todayIso } from './lib/dates'
 import { generateItineraries, priceBooking } from './lib/flights'
@@ -22,7 +24,8 @@ import { validateContact, validatePassenger, validateSearch, type ErrorKey } fro
 const PREFS_KEY = 'africair.prefs.v1'
 const DRAFT_KEY = 'africair.draft.v1'
 
-type Draft = { search: SearchParams; outboundId: string; inboundId: string; passengers: Passenger[]; contact: Contact }
+type Promo = { code: string; percent: number }
+type Draft = { search: SearchParams; outboundId: string; inboundId: string; passengers: Passenger[]; contact: Contact; promo?: Promo }
 
 const emptyPassenger = (type: PassengerType): Passenger => ({ type, gender: '', firstName: '', lastName: '', dob: '', nationality: '', documentNumber: '', documentExpiry: '' })
 
@@ -66,6 +69,7 @@ function loadDraft(): Draft {
     inboundId: saved.inboundId ?? '',
     passengers: syncPassengers(search.passengers, Array.isArray(saved.passengers) ? saved.passengers : []),
     contact: { email: saved.contact?.email ?? '', phone: saved.contact?.phone ?? '' },
+    promo: saved.promo,
   }
 }
 
@@ -95,6 +99,22 @@ export default function App() {
   const [lastBooking, setLastBooking] = useState<Booking | null>(null)
   const [pdfStatus, setPdfStatus] = useState<'idle' | 'done' | 'failed'>('idle')
   const [submitting, setSubmitting] = useState(false)
+  const [saveError, setSaveError] = useState('')
+  const [config, setConfig] = useState<RuntimeConfig>(DEFAULT_CONFIG)
+
+  const refreshConfig = useCallback(async () => {
+    const next = await fetchConfig()
+    setConfig(next)
+    return next
+  }, [])
+  useEffect(() => {
+    void refreshConfig().then((next) => {
+      // Deployment defaults apply only until the visitor picks their own language / currency.
+      if (!prefs.language && next.defaultLanguage) setLanguage(next.defaultLanguage)
+      if (!prefs.currency && next.defaultCurrency && CURRENCIES.some((item) => item.code === next.defaultCurrency)) setCurrencyCode(next.defaultCurrency)
+    })
+  }, [refreshConfig, prefs])
+  useEffect(() => { document.title = `${config.brandName} — ${language === 'fr' ? 'réservez vos vols' : 'book your flights'}` }, [config.brandName, language])
 
   const t = TRANSLATIONS[language]
   const locale = language === 'fr' ? 'fr-FR' : 'en-GB'
@@ -103,10 +123,19 @@ export default function App() {
     language, locale, t, currency,
     money: (usd) => formatMoney(usd, currency, locale),
     date: (iso, style) => formatDate(iso, locale, style),
-  }), [language, locale, t, currency])
+    config,
+  }), [language, locale, t, currency, config])
 
   useEffect(() => { document.documentElement.lang = language }, [language])
-  useEffect(() => writeJson(() => localStorage, PREFS_KEY, { language, currency: currencyCode }), [language, currencyCode])
+  // Only an explicit choice is remembered, so deployment defaults (DEFAULT_LANGUAGE / DEFAULT_CURRENCY) still apply to new visitors.
+  const chooseLanguage = (value: Language) => {
+    setLanguage(value)
+    writeJson(() => localStorage, PREFS_KEY, { ...readJson(() => localStorage, PREFS_KEY), language: value })
+  }
+  const chooseCurrency = (value: string) => {
+    setCurrencyCode(value)
+    writeJson(() => localStorage, PREFS_KEY, { ...readJson(() => localStorage, PREFS_KEY), currency: value })
+  }
   useEffect(() => writeJson(() => sessionStorage, DRAFT_KEY, draft), [draft])
 
   // A /flights URL is the source of truth for the active search (shareable, works with back/forward).
@@ -126,7 +155,8 @@ export default function App() {
   const outbound = outboundOptions.find((item) => item.id === draft.outboundId)
   const inbound = round ? inboundOptions.find((item) => item.id === draft.inboundId) : undefined
   const flightsChosen = !!outbound && (!round || !!inbound)
-  const fare = useMemo(() => (outbound ? priceBooking(outbound, inbound, search.passengers) : null), [outbound, inbound, search.passengers])
+  const promo = config.features.promoCodes ? draft.promo : undefined
+  const fare = useMemo(() => (outbound ? priceBooking(outbound, inbound, search.passengers, config.serviceFeeUsd, promo) : null), [outbound, inbound, search.passengers, config.serviceFeeUsd, promo])
 
   const today = todayIso()
   const lastFlight = (inbound ?? outbound)?.segments.slice(-1)[0]
@@ -152,9 +182,10 @@ export default function App() {
     }
   }, [language])
 
-  const confirmBooking = () => {
-    if (!outbound || !fare || !flightsChosen || !travellersValid || submitting) return
+  const confirmBooking = async () => {
+    if (!outbound || !fare || !flightsChosen || !travellersValid || submitting || config.maintenanceMode) return
     setSubmitting(true)
+    setSaveError('')
     const booking: Booking = {
       reference: makeReference(bookings.map((item) => item.reference)),
       createdAt: new Date().toISOString(),
@@ -173,6 +204,15 @@ export default function App() {
       fare,
       currency: { code: currency.code, rate: currency.rate },
     }
+    if (config.storage === 'database') {
+      try {
+        await saveRemoteBooking(booking)
+      } catch (error) {
+        setSaveError(t.saveFailed((error as Error).message))
+        setSubmitting(false)
+        return
+      }
+    }
     saveBooking(booking)
     setBookings(loadBookings())
     setLastBooking(booking)
@@ -187,9 +227,35 @@ export default function App() {
   const onConfirmation = route.path.startsWith('/confirmation/')
   useEffect(() => {
     if (!onConfirmation) return
-    setDraft((current) => ({ ...current, outboundId: '', inboundId: '', passengers: syncPassengers(current.search.passengers, []) }))
+    setDraft((current) => ({ ...current, outboundId: '', inboundId: '', promo: undefined, passengers: syncPassengers(current.search.passengers, []) }))
     setShowErrors(false)
   }, [onConfirmation])
+
+  const findRemote = async (reference: string, lastName: string) => {
+    if (config.storage !== 'database') return undefined
+    try {
+      const booking = await findRemoteBooking(reference.trim().toUpperCase(), lastName.trim())
+      saveBooking(booking) // keep a local copy so it shows under My trips on this device
+      setBookings(loadBookings())
+      return booking
+    } catch {
+      return undefined
+    }
+  }
+
+  const cancelBooking = async (item: Booking) => {
+    if (config.storage === 'database') {
+      try {
+        await cancelRemoteBooking(item.reference, item.passengers[0].lastName)
+      } catch (error) {
+        window.alert(t.saveFailed((error as Error).message))
+        return
+      }
+    }
+    updateBooking(item.reference, { status: 'cancelled' })
+    setBookings(loadBookings())
+    if (lastBooking?.reference === item.reference) setLastBooking({ ...item, status: 'cancelled' })
+  }
 
   const findStored = (reference: string) => bookings.find((item) => item.reference === reference) ?? (lastBooking?.reference === reference ? lastBooking : undefined)
 
@@ -199,6 +265,7 @@ export default function App() {
       case '/':
         return <Home search={formSearch} onChange={(value) => { setFormSearch(value); setSearchError(null) }} onSubmit={submitSearch} error={searchError ? t[searchError] : ''} />
       case '/destinations':
+        if (!config.features.destinations) return <NotFound />
         return <Destinations onPick={(code, end) => {
           setFormSearch((current) => {
             const next = { ...current, [end]: code }
@@ -238,17 +305,23 @@ export default function App() {
         if (!flightsChosen || !outbound || !fare) return <Redirect to={`/flights?${searchToQuery(search)}`} />
         if (!travellersValid) return <Redirect to="/travellers" />
         return <Review search={search} outbound={outbound} inbound={inbound} passengers={draft.passengers} contact={draft.contact} fare={fare} submitting={submitting}
+          saveError={saveError} promo={promo} onPromo={(value) => setDraft((current) => ({ ...current, promo: value }))}
           onEditFlights={() => navigate(`/flights?${searchToQuery(search)}`)} onEditTravellers={() => navigate('/travellers')} onConfirm={confirmBooking} />
       case '/confirmation': {
         const booking = param ? findStored(param) : undefined
         return booking ? <Confirmation booking={booking} onDownload={download} pdfStatus={pdfStatus} /> : <NotFound />
       }
+      case '/status':
+        return <StatusPage onRefresh={refreshConfig} />
+      case '/admin':
+        return <AdminPage />
       case '/trips': {
-        if (!param) return <Trips bookings={bookings} onDownload={download} />
+        if (!config.features.myTrips) return <NotFound />
+        if (!param) return <Trips bookings={bookings} onDownload={download} onFind={findRemote} />
         const booking = findStored(param)
         if (!booking) return <NotFound />
         return <TripDetail booking={booking} onDownload={download}
-          onCancel={(item) => { updateBooking(item.reference, { status: 'cancelled' }); setBookings(loadBookings()); if (lastBooking?.reference === item.reference) setLastBooking({ ...item, status: 'cancelled' }) }}
+          onCancel={(item) => void cancelBooking(item)}
           onRemove={(item) => { removeBooking(item.reference); setBookings(loadBookings()); setLastBooking(null); navigate('/trips') }} />
       }
       default:
@@ -258,12 +331,14 @@ export default function App() {
 
   return <AppContext.Provider value={context}>
     <div className="app-shell" id="top">
-      <Header path={route.path} onLanguage={setLanguage} onCurrency={setCurrencyCode} />
+      <EnvironmentBanner />
+      <Header path={route.path} onLanguage={chooseLanguage} onCurrency={chooseCurrency} />
+      <AnnouncementBar />
       {page}
       <footer>
-        <span className="brand"><span className="brand-mark"><Plane size={16} /></span><span className="brand-name">Afric<span>Air</span></span></span>
-        <span>{t.footerNote}</span>
-        <span>© {new Date().getFullYear()} AfricAir</span>
+        <span className="brand"><span className="brand-mark"><Plane size={16} /></span><BrandName name={config.brandName} /></span>
+        <span className="footer-note">{t.footerNote} · <a href={`mailto:${config.supportEmail}`}>{config.supportEmail}</a>{config.supportPhone && ` · ${config.supportPhone}`}</span>
+        <span className="footer-links"><a href="#/status"><Activity size={12} /> {t.navStatus}</a> · © {new Date().getFullYear()} {config.brandName}</span>
       </footer>
     </div>
   </AppContext.Provider>

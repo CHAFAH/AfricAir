@@ -3,12 +3,13 @@ import { useApp } from '../context'
 import { AIRPORTS, COUNTRY_CODES } from '../data/airports'
 import { navigate } from '../lib/router'
 import type { SearchParams } from '../lib/types'
+import { MaintenanceNotice } from './Runtime'
 import { SearchForm } from './SearchForm'
 
 type Props = { search: SearchParams; onChange: (search: SearchParams) => void; onSubmit: () => void; error: string }
 
 export function Home({ search, onChange, onSubmit, error }: Props) {
-  const { t, language } = useApp()
+  const { t, language, config } = useApp()
   const airports = AIRPORTS.length.toLocaleString(language)
   const countries = String(COUNTRY_CODES.length)
   return <main>
@@ -26,6 +27,7 @@ export function Home({ search, onChange, onSubmit, error }: Props) {
       </div>
     </section>
     <div className="search-wrap">
+      {config.maintenanceMode && <MaintenanceNotice />}
       <SearchForm value={search} onChange={onChange} onSubmit={onSubmit} error={error} />
       <p className="search-note"><MapPin size={15} />{t.routeHint(airports, countries)}</p>
     </div>
@@ -39,7 +41,7 @@ export function Home({ search, onChange, onSubmit, error }: Props) {
       <div>
         <span className="eyebrow light"><Plane size={14} />AFRICAIR NETWORK</span>
         <h2>{t.lowerTitle}</h2><p>{t.lowerText}</p>
-        <button className="button button-primary banner-button" onClick={() => navigate('/destinations')}>{t.exploreDestinations}</button>
+        {config.features.destinations && <button className="button button-primary banner-button" onClick={() => navigate('/destinations')}>{t.exploreDestinations}</button>}
       </div>
       <div className="route-marks"><span>CAI</span><i /><span>NBO</span><i /><span>LOS</span><i /><span>CPT</span></div>
     </section>

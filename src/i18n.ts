@@ -78,6 +78,26 @@ const en = {
 
   notFoundTitle: 'Page not found', notFoundText: 'That page doesn’t exist or your session has expired.', goHome: 'Go to search',
   footerNote: 'Indicative schedules and fares. No payments are processed.',
+  promoCode: 'Promo code', applyPromo: 'Apply', removePromo: 'Remove', promoInvalid: 'This promo code is not valid.', promoError: 'The code could not be checked. Please try again.',
+  promoApplied: (percent: number) => `${percent}% off the base fare`,
+  maintenanceTitle: 'Bookings are paused for maintenance', maintenanceText: 'You can still browse destinations and manage existing trips. Please try again later.',
+  envBanner: (env: string, version: string) => `${env.toUpperCase()} environment · ${version}`,
+  saveFailed: (message: string) => `Your booking could not be saved on the server (${message}). Nothing was booked; please try again.`,
+  storageDatabase: 'Bookings are stored on AfricAir servers and can be found from any device.',
+  navStatus: 'System status', statusTitle: 'System status', statusSubtitle: 'The runtime configuration this deployment received. Secret values are never shown.',
+  apiLabel: 'API', apiReachable: 'Reachable', apiUnavailable: 'Not reachable — the site runs in static mode with built-in defaults.',
+  environment: 'Environment', versionLabel: 'Version', storageLabel: 'Booking storage', storageDb: 'PostgreSQL database', storageLocal: 'This browser only',
+  maintenance: 'Maintenance mode', on: 'On', off: 'Off', featuresLabel: 'Features', announcementLabel: 'Announcement', none: 'None',
+  serviceFeeLabel: 'Service fee', defaultsLabel: 'Default language / currency', brandLabel: 'Brand name', supportLabel: 'Support contact',
+  secretsTitle: 'Secrets', secretName: 'Secret', secretStatus: 'Status', secretSource: 'Source', secretLoaded: 'Loaded', secretFingerprint: 'Fingerprint',
+  configuredLabel: 'Configured', notConfigured: 'Not configured', codesCount: (n: number) => `${n} code${n === 1 ? '' : 's'}`, refresh: 'Refresh',
+  dbConnected: 'Connected', dbError: 'Error — database unreachable', databaseLabel: 'Database credentials', adminTokenLabel: 'Admin token', promoCodesLabel: 'Promo codes',
+  sourceFile: 'Mounted file (reloads automatically)', sourceEnv: 'Environment variable (restart to change)', sourceNone: '—',
+  adminTitle: 'Admin', adminSubtitle: 'Bookings stored in the database. Access requires the ADMIN_TOKEN secret.', adminTokenInput: 'Admin token',
+  signIn: 'Sign in', signOut: 'Sign out', adminDisabled: 'Admin is disabled on this deployment: no ADMIN_TOKEN secret is configured.',
+  adminDenied: 'Invalid admin token.', adminNoDb: 'No database is configured, so there are no server-side bookings.', adminUnavailable: 'The API is not reachable.',
+  statTotal: 'Bookings', statConfirmed: 'Confirmed', statCancelled: 'Cancelled', statLast24h: 'Last 24 h', statRevenue: 'Confirmed revenue (USD)',
+  routeLabel: 'Route', created: 'Created', noBookingsYet: 'No bookings yet.',
 }
 
 export type Translation = typeof en
@@ -162,6 +182,26 @@ const fr: Translation = {
 
   notFoundTitle: 'Page introuvable', notFoundText: 'Cette page n’existe pas ou votre session a expiré.', goHome: 'Aller à la recherche',
   footerNote: 'Horaires et tarifs indicatifs. Aucun paiement n’est traité.',
+  promoCode: 'Code promo', applyPromo: 'Appliquer', removePromo: 'Retirer', promoInvalid: 'Ce code promo n’est pas valide.', promoError: 'Le code n’a pas pu être vérifié. Réessayez.',
+  promoApplied: (percent: number) => `${percent} % de réduction sur le tarif de base`,
+  maintenanceTitle: 'Réservations suspendues pour maintenance', maintenanceText: 'Vous pouvez toujours consulter les destinations et gérer vos voyages. Réessayez plus tard.',
+  envBanner: (env: string, version: string) => `Environnement ${env.toUpperCase()} · ${version}`,
+  saveFailed: (message: string) => `Votre réservation n’a pas pu être enregistrée sur le serveur (${message}). Rien n’a été réservé ; réessayez.`,
+  storageDatabase: 'Les réservations sont enregistrées sur les serveurs AfricAir et accessibles depuis n’importe quel appareil.',
+  navStatus: 'État du système', statusTitle: 'État du système', statusSubtitle: 'La configuration reçue par ce déploiement. Les valeurs secrètes ne sont jamais affichées.',
+  apiLabel: 'API', apiReachable: 'Joignable', apiUnavailable: 'Injoignable — le site fonctionne en mode statique avec les valeurs par défaut.',
+  environment: 'Environnement', versionLabel: 'Version', storageLabel: 'Stockage des réservations', storageDb: 'Base PostgreSQL', storageLocal: 'Ce navigateur uniquement',
+  maintenance: 'Mode maintenance', on: 'Activé', off: 'Désactivé', featuresLabel: 'Fonctionnalités', announcementLabel: 'Annonce', none: 'Aucune',
+  serviceFeeLabel: 'Frais de service', defaultsLabel: 'Langue / devise par défaut', brandLabel: 'Nom de marque', supportLabel: 'Contact support',
+  secretsTitle: 'Secrets', secretName: 'Secret', secretStatus: 'État', secretSource: 'Source', secretLoaded: 'Chargé', secretFingerprint: 'Empreinte',
+  configuredLabel: 'Configuré', notConfigured: 'Non configuré', codesCount: (n: number) => `${n} code${n === 1 ? '' : 's'}`, refresh: 'Actualiser',
+  dbConnected: 'Connectée', dbError: 'Erreur — base injoignable', databaseLabel: 'Identifiants de la base', adminTokenLabel: 'Jeton admin', promoCodesLabel: 'Codes promo',
+  sourceFile: 'Fichier monté (rechargé automatiquement)', sourceEnv: 'Variable d’environnement (redémarrage requis)', sourceNone: '—',
+  adminTitle: 'Admin', adminSubtitle: 'Réservations enregistrées en base. Accès protégé par le secret ADMIN_TOKEN.', adminTokenInput: 'Jeton admin',
+  signIn: 'Se connecter', signOut: 'Se déconnecter', adminDisabled: 'L’admin est désactivé sur ce déploiement : aucun secret ADMIN_TOKEN configuré.',
+  adminDenied: 'Jeton admin invalide.', adminNoDb: 'Aucune base de données configurée : pas de réservations côté serveur.', adminUnavailable: 'L’API est injoignable.',
+  statTotal: 'Réservations', statConfirmed: 'Confirmées', statCancelled: 'Annulées', statLast24h: 'Dernières 24 h', statRevenue: 'Chiffre confirmé (USD)',
+  routeLabel: 'Trajet', created: 'Créée', noBookingsYet: 'Aucune réservation pour le moment.',
 }
 
 export const TRANSLATIONS = { en, fr }
