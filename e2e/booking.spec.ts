@@ -184,9 +184,10 @@ test('search validation, swap, destinations and shareable URLs', async ({ page }
   await expect(page.locator('input[name="to"]')).toHaveValue(/SHO/)
 
   // Deep link straight to results; bad links bounce home; guarded steps redirect.
-  await page.goto('/#/flights?from=CAI&to=JNB&depart=2026-12-01&adults=1&children=0&infants=0&cabin=economy')
+  const inAMonth = new Date(Date.now() + 30 * 86_400_000).toISOString().slice(0, 10)
+  await page.goto(`/#/flights?from=CAI&to=JNB&depart=${inAMonth}&adults=1&children=0&infants=0&cabin=economy`)
   await expect(page.getByTestId('flight-card').first()).toBeVisible()
-  await page.goto('/#/flights?from=XXX&to=JNB&depart=2026-12-01')
+  await page.goto(`/#/flights?from=XXX&to=JNB&depart=${inAMonth}`)
   await expect(page).toHaveURL(/#\/$/)
   await page.goto('/#/review')
   await expect(page).toHaveURL(/#\/flights/)

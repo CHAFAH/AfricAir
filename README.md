@@ -60,3 +60,14 @@ src/
 scripts/build-airports.mjs  # Regenerates airports.json: `pnpm data:airports`
 e2e/booking.spec.ts         # End-to-end tests
 ```
+
+## DevOps bootcamp projects
+
+AfricAir doubles as the sample application for a four-part DevOps bootcamp. Each project has its own brief, acceptance checks, knowledge questions and grading rubric:
+
+| # | Project | Domains |
+|---|---|---|
+| 1 | [Linux, scripting, the build process & AWS hosting](projects/01-linux-scripting-build-aws/README.md) | Bash, systemd, nginx, EC2, IAM, S3 + CloudFront |
+| 2 | [Containerise AfricAir with Docker](projects/02-docker/README.md) | Multi-stage builds, hardening, Compose, scanning, ECR |
+| 3 | [CI/CD with GitHub Actions and CircleCI](projects/03-cicd-github-actions-circleci/README.md) | Pipelines, caching, OIDC, build-once/promote, approvals |
+| 4 | [Kubernetes on EKS with Terraform, RDS, External Secrets & Ingress](projects/04-kubernetes-eks-terraform/README.md) | Helm, kind, Terraform, EKS, RDS, ESO, ALB Ingress |
