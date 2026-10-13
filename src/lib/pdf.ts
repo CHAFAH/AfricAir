@@ -274,6 +274,7 @@ export function createBookingPdf(booking: Booking, language: Language) {
   })
   fareRow(t.baseFare, money(booking.fare.base))
   fareRow(t.taxes, money(booking.fare.taxes))
+  if (booking.fare.discount) fareRow(`${t.promoCode} ${booking.fare.discount.code} (-${booking.fare.discount.percent}%)`, `- ${money(booking.fare.discount.amountUsd)}`)
   fareRow(t.service, money(booking.fare.service))
   color(COLOR.line, 'draw')
   doc.line(margin, y - 6, width - margin, y - 6)

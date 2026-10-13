@@ -23,7 +23,10 @@ async function fillTraveller(page: Page, index: number, data: { gender: string; 
 test('complete round-trip booking with mixed travellers, PDF and My trips', async ({ page }) => {
   const errors: string[] = []
   page.on('pageerror', (error) => errors.push(error.message))
-  page.on('console', (message) => { if (message.type() === 'error') errors.push(message.text()) })
+  page.on('console', (message) => {
+    // Without the API (static mode) the /api/config probe fails by design; anything else is a real error.
+    if (message.type() === 'error' && !message.location().url.includes('/api/')) errors.push(message.text())
+  })
 
   await page.goto('/')
   await expect(page.getByRole('heading', { level: 1 })).toContainText('Every journey')

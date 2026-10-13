@@ -55,7 +55,8 @@ export type Passenger = {
 export type Contact = { email: string; phone: string }
 
 export type FareLine = { type: PassengerType; count: number; fareEach: number; taxEach: number }
-export type FareBreakdown = { lines: FareLine[]; base: number; taxes: number; service: number; total: number }
+export type FareDiscount = { code: string; percent: number; amountUsd: number }
+export type FareBreakdown = { lines: FareLine[]; base: number; taxes: number; service: number; discount?: FareDiscount; total: number }
 
 export type Booking = {
   reference: string

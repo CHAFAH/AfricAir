@@ -51,15 +51,15 @@ export function Confirmation({ booking, onDownload, pdfStatus }: PdfProps & { bo
   </main>
 }
 
-export function Trips({ bookings, onDownload }: PdfProps & { bookings: Booking[] }) {
-  const { t, date } = useApp()
+export function Trips({ bookings, onDownload, onFind }: PdfProps & { bookings: Booking[]; onFind: (reference: string, lastName: string) => Promise<Booking | undefined> }) {
+  const { t, date, config } = useApp()
   const [reference, setReference] = useState('')
   const [lastName, setLastName] = useState('')
   const [notFound, setNotFound] = useState(false)
 
-  const lookup = (event: React.FormEvent) => {
+  const lookup = async (event: React.FormEvent) => {
     event.preventDefault()
-    const booking = findBooking(reference, lastName)
+    const booking = findBooking(reference, lastName) ?? (await onFind(reference, lastName))
     if (booking) navigate(`/trips/${booking.reference}`)
     else setNotFound(true)
   }
@@ -93,7 +93,7 @@ export function Trips({ bookings, onDownload }: PdfProps & { bookings: Booking[]
             </div>
           </article>
         })}
-        <p className="storage-note">{t.storageNote}</p>
+        <p className="storage-note">{config.storage === 'database' ? t.storageDatabase : t.storageNote}</p>
       </section>
     </div>
   </main>

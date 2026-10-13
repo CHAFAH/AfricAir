@@ -176,7 +176,11 @@ function isToday(iso: string, now: Date) {
   return iso === `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(now.getDate()).padStart(2, '0')}`
 }
 
-export function priceBooking(outbound: Itinerary, inbound: Itinerary | undefined, counts: PassengerCounts): FareBreakdown {
+/** `promo` discounts the base fare only (not taxes or the service fee). */
+export function priceBooking(
+  outbound: Itinerary, inbound: Itinerary | undefined, counts: PassengerCounts,
+  serviceFeeUsd = SERVICE_FEE_USD, promo?: { code: string; percent: number },
+): FareBreakdown {
   const fare = outbound.fareUsd + (inbound?.fareUsd ?? 0)
   const tax = outbound.taxUsd + (inbound?.taxUsd ?? 0)
   const lines = [
@@ -186,7 +190,8 @@ export function priceBooking(outbound: Itinerary, inbound: Itinerary | undefined
   ].filter((line) => line.count > 0)
   const base = lines.reduce((sum, line) => sum + line.fareEach * line.count, 0)
   const taxes = lines.reduce((sum, line) => sum + line.taxEach * line.count, 0)
-  return { lines, base, taxes, service: SERVICE_FEE_USD, total: base + taxes + SERVICE_FEE_USD }
+  const discount = promo ? { code: promo.code, percent: promo.percent, amountUsd: Math.round(base * promo.percent) / 100 } : undefined
+  return { lines, base, taxes, service: serviceFeeUsd, ...(discount ? { discount } : {}), total: base - (discount?.amountUsd ?? 0) + taxes + serviceFeeUsd }
 }
 
 export const totalTravellers = (counts: PassengerCounts) => counts.adults + counts.children + counts.infants

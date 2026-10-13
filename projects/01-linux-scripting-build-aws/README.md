@@ -19,8 +19,9 @@ You will compare the two approaches at the end.
 
 | Fact | Detail |
 |---|---|
-| Type | Single-page app (React + TypeScript), **static files only**. There is no backend; bookings live in the browser's `localStorage`. |
-| Runtime | Node.js 20 or 22 LTS **to build only**. Nothing Node-based runs in production. |
+| Front end | Single-page app (React + TypeScript) built to **static files**. It works on its own in "static mode", with bookings kept in the browser. |
+| API (`server/`) | Optional Node.js 22 service on port **4000**, with metrics on **9464**. It holds the runtime config and the secrets, and stores bookings in PostgreSQL. Build it with `pnpm build:api` and run it with `node server/dist/index.js`. All variables are listed in `server/.env.example`. |
+| Runtime | Node.js 22 LTS builds both parts. In production only the **API** runs on Node; the front end is plain files. |
 | Package manager | `pnpm`, pinned in `package.json` → `packageManager`. Enable it with `corepack enable`. |
 | Install | `pnpm install --frozen-lockfile` |
 | Quality gates | `pnpm check` (TypeScript), `pnpm test` (Vitest unit tests) |
@@ -124,6 +125,30 @@ Write `/etc/nginx/sites-available/africair` (commit a copy to `deploy/nginx/afri
 
 Generate traffic first: run the e2e suite against your server a few times, and `curl` some 404s.
 
+### B8. Run the API with systemd, environment files and credentials
+
+The site is more than static files: the API in `server/` changes what users see, based on environment variables and secrets. Run it on the same server.
+
+1. **PostgreSQL:** install it locally (`apt install postgresql`), then create a database `africair` and a role `africair_app` with a strong password. Apply the schema with `DATABASE_URL=... node server/dist/migrate.js`.
+2. **Package the API:** extend `build.sh` to run `pnpm build:api` and to package `server/dist`, `server/migrations` and **production-only** dependencies in a second artifact. `deploy.sh` installs it under `/opt/africair/api/releases/<id>`, using the same atomic `current` symlink.
+3. **Settings:** put the non-secret settings in `/etc/africair/api.env`, owned by `root:africair` with mode `0640`:
+   ```ini
+   APP_ENV=staging
+   APP_VERSION=1.0.0
+   ANNOUNCEMENT_TEXT=Welcome to the AfricAir staging server
+   ANNOUNCEMENT_LEVEL=info
+   SERVICE_FEE_USD=9
+   DEFAULT_CURRENCY=KES
+   ```
+4. **Secrets:** store them as **files** under `/etc/africair/secrets/` (`admin_token`, `promo_codes`, `database_url`), owned by root with mode `0600`. Deliver them to the service with systemd **`LoadCredential=`**, and point the app at them with `ADMIN_TOKEN_FILE=%d/admin_token` (and the same for `PROMO_CODES_FILE` and `DATABASE_URL_FILE`). The service runs as `africair` and must **not** be able to read `/etc/africair/secrets` directly. Prove both.
+5. **The `africair-api.service` unit** needs: `User=africair`, `EnvironmentFile=`, `Restart=on-failure`, `NoNewPrivileges=yes`, `ProtectSystem=strict`, `ProtectHome=yes`, `PrivateTmp=yes`, and `MemoryMax=256M`. The API handles `SIGTERM` gracefully; set `TimeoutStopSec` to more than its `SHUTDOWN_DELAY_MS` and explain why.
+6. **nginx:** proxy `location /api/` to `127.0.0.1:4000`, passing `X-Forwarded-For`. Port 9464 (metrics) must **not** be reachable from outside. Prove it.
+7. **Show the effect:** open `http://<ec2>/#/status`. It must show environment `staging`, storage "PostgreSQL database", and all three secrets loaded from a **file**. Then:
+   - change `ANNOUNCEMENT_TEXT` and restart the service: the banner text changes;
+   - set `MAINTENANCE_MODE=true`: the booking button is disabled;
+   - book a flight with promo code `SAVE10`, then sign in at `/#/admin` with your admin token and find the booking;
+   - rotate `admin_token` (`openssl rand -hex 24`). Does the change take effect without a restart? Explain the result. Hint: what does `LoadCredential` do at service start?
+
 ## Part C — Serverless static hosting (S3 + CloudFront)
 
 The same `dist/` folder, without servers.
@@ -142,6 +167,7 @@ The same `dist/` folder, without servers.
 
    Prove it: try to list another bucket with those credentials and show the `AccessDenied`.
 5. Run the full e2e suite against CloudFront: `BASE_URL=https://dxxxx.cloudfront.net pnpm test:e2e`.
+6. Open `/#/status` on CloudFront: it reports **API not reachable**, and the site runs in static mode. Explain which features are missing compared with the EC2 deployment, and why S3 alone can never keep a secret.
 
 ## Acceptance checks (the instructor will run these)
 
@@ -156,6 +182,10 @@ ls -l /opt/africair/current                                      # -> symlink to
 ./scripts/ops/deploy.sh <artifact-with-wrong-checksum>; echo $?  # -> non-zero, nothing changed
 ./scripts/ops/rollback.sh && curl -s http://<ec2>/version.json   # -> previous commit
 shellcheck scripts/ops/*.sh                                      # -> clean
+curl -s http://<ec2>/api/config | jq '.appEnv, .storage, .secrets'  # staging, database, all sources "file"
+curl -s -m 3 http://<ec2>:9464/metrics; echo $?                  # -> fails (not exposed)
+sudo -u africair cat /etc/africair/secrets/admin_token           # -> Permission denied
+systemctl show africair-api -p User,NoNewPrivileges,ProtectSystem
 
 # CloudFront
 curl -sI https://<cf>/ | grep -i x-cache
@@ -176,7 +206,7 @@ BASE_URL=https://<cf> pnpm test:e2e                              # -> all pass
 Open a pull request on your fork containing:
 
 - `scripts/ops/`: `bootstrap.sh`, `build.sh`, `deploy.sh`, `rollback.sh`, `healthcheck.sh`, `report.sh`, `publish-s3.sh`
-- `deploy/nginx/africair.conf`, `deploy/systemd/*.service|*.timer`, `deploy/iam/deployer-policy.json`
+- `deploy/nginx/africair.conf`, `deploy/systemd/*.service|*.timer` (including `africair-api.service`), `deploy/iam/deployer-policy.json`, and a **redacted** `api.env.example`
 - `ANSWERS.md`, with screenshots or terminal output for every acceptance check
 - a 5-minute demo: deploy a new commit, break it on purpose, watch the automatic rollback
 
@@ -187,9 +217,10 @@ Open a pull request on your fork containing:
 | Build understanding (Part A) | 10 |
 | `bootstrap.sh` idempotency and safety | 10 |
 | `build.sh` correctness, exit codes, `version.json` | 15 |
-| Atomic deploy, auto-rollback, retention | 20 |
+| Atomic deploy, auto-rollback, retention | 15 |
 | nginx caching, security headers, JSON logs | 10 |
-| systemd timer health check and log report | 10 |
+| systemd timer health check and log report | 5 |
+| API under systemd: env file, `LoadCredential` secrets, hardening, proxy | 10 |
 | S3/CloudFront publish order, invalidation, least-privilege IAM | 15 |
 | Script quality: shellcheck clean, `--help`, comments, no hard-coded secrets | 10 |
 
