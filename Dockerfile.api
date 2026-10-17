@@ -29,13 +29,23 @@ COPY server/package.json ./package.json
 RUN npm install --omit=dev --ignore-scripts
 
 # ── Stage 3: runtime ──────────────────────────────────────────────────────────
-# Distroless: no shell, no package manager, no yarn — just Node + glibc
-FROM gcr.io/distroless/nodejs22-debian12:nonroot AS runtime
+FROM node:22-alpine AS runtime
 
 LABEL org.opencontainers.image.source="https://github.com/engineerkg/AfricAir" \
       org.opencontainers.image.revision="" \
       org.opencontainers.image.version="" \
       org.opencontainers.image.created=""
+
+# Strip tools we don't need at runtime
+RUN npm uninstall -g npm corepack \
+    && apk del --purge apk-tools \
+    && rm -rf /usr/local/lib/node_modules/npm \
+              /usr/local/lib/node_modules/corepack \
+              /usr/local/bin/npm \
+              /usr/local/bin/npx \
+              /usr/local/bin/corepack \
+              /opt/yarn* \
+              /tmp/* /var/cache/apk/*
 
 WORKDIR /app
 
@@ -44,11 +54,11 @@ COPY --from=build     /app/server/dist   ./dist
 COPY --from=build     /app/server/migrations ./migrations
 COPY server/package.json ./
 
-# nonroot image already runs as uid 65532 (nonroot)
+USER node
+
 EXPOSE 4000 9464
 
-# No wget in distroless — healthcheck via node
 HEALTHCHECK --interval=30s --timeout=5s --start-period=10s --retries=3 \
-  CMD ["/nodejs/bin/node", "-e", "require('http').get('http://localhost:4000/api/healthz',r=>{process.exit(r.statusCode===200?0:1)}).on('error',()=>process.exit(1))"]
+  CMD wget -qO- http://localhost:4000/api/healthz || exit 1
 
-CMD ["dist/index.js"]
+CMD ["node", "dist/index.js"]
