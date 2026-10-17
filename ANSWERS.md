@@ -29,3 +29,4 @@ What breaks without them: Web browsers and CDNs aggressively cache static files.
 6. Storage Footprint Metrics
    Total Folder Volume: 1.4M  dist/
    Gzipped Stream Footprint: 450771
+   
