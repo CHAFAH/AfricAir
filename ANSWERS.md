@@ -217,17 +217,6 @@ new-token admin call: 200
 
 *(screenshot: /#/status showing fingerprint aa373ff9; /#/admin rejecting old token and accepting new)*
 
-### Check 7 — No secret values in the container environment
-
-```
-$ docker compose exec api sh -c 'id -u; env | grep -iE "token|password|promo"'
-<uid != 0>
-ADMIN_TOKEN_FILE=/run/secrets/admin_token
-PROMO_CODES_FILE=/run/secrets/promo_codes
-```
-
-Only the `*_FILE` **paths** are present — no secret values. File secrets are safer than env-var secrets because env vars leak through `docker inspect`, `/proc/<pid>/environ`, and crash dumps, whereas a mounted file is readable only inside the container's mount namespace.
-
 ### Check 6 — Database outage and recovery
 
 **Stop the database:**
@@ -259,6 +248,19 @@ $ curl -s http://localhost:8080/api/config | jq '.secrets.database'
 Once the database is healthy again the API's readiness probe flips back to **200** and `/#/status` shows the database **connected** — all without restarting `api`. The readiness endpoint reflects live dependency health, so the load balancer stops and resumes routing automatically; liveness (`/api/healthz`) stayed up the whole time, which is why the container was never killed and recreated.
 
 *(screenshots: /#/status showing database error while db is down; /#/status connected after recovery)*
+
+### Check 7 — No secret values in the container environment
+
+The distroless API image has no shell, so the environment is inspected with node rather than `sh`/`env`:
+
+```
+$ docker exec africair-api-1 /nodejs/bin/node -e 'console.log(process.getuid()); for (const k of Object.keys(process.env)) if (/token|password|promo/i.test(k)) console.log(k+"="+process.env[k])'
+65532
+ADMIN_TOKEN_FILE=/run/secrets/admin_token
+PROMO_CODES_FILE=/run/secrets/promo_codes
+```
+
+Runs as non-root (uid 65532), and only the `*_FILE` **paths** are present — no secret values. File secrets are safer than env-var secrets because env vars leak through `docker inspect`, `/proc/<pid>/environ`, and crash dumps, whereas a mounted file is readable only inside the container's mount namespace.
 
 ## Knowledge check
 
@@ -316,8 +318,9 @@ X-Upstream: 172.18.0.3:4000
 X-Upstream: 172.18.0.3:4000
 X-Upstream: 172.18.0.3:4000
 
-$ docker compose exec -T api sh -c 'id -u; env | grep -iE "token|password|promo"'
-1000
+# distroless has no shell, so run the check via node instead of `sh -c`
+$ docker exec africair-api-1 /nodejs/bin/node -e 'console.log(process.getuid()); for (const k of Object.keys(process.env)) if (/token|password|promo/i.test(k)) console.log(k+"="+process.env[k])'
+65532
 ADMIN_TOKEN_FILE=/run/secrets/admin_token
 PROMO_CODES_FILE=/run/secrets/promo_codes
 ```
@@ -326,20 +329,25 @@ PROMO_CODES_FILE=/run/secrets/promo_codes
 - Config shows staging, brand, database storage, all secret sources `file`. ✅
 - `X-Environment: staging`. ✅
 - Load balancing across the 2 `api` replicas via the Docker resolver + `proxy_pass` variable: two distinct upstreams observed. ✅
-- API runs as uid `1000` (non-root); only `*_FILE` paths in the environment, no secret values. ✅
+- API runs as uid `65532` (non-root, distroless `nonroot`); only `*_FILE` paths in the environment, no secret values. ✅
 
 ### Image sizes
 
 ```
 $ docker image inspect africair-web:latest africair-api:latest --format '{{.Config.User}} {{.Size}}'
-101      75594287     # web  ~75 MB
-nonroot  212268357    # api  ~212 MB  (distroless)
+101      114766569    # web  ~115 MB  (nginx-unprivileged alpine, apk-upgraded)
+nonroot  212268357    # api  ~212 MB  (distroless Node 22)
 ```
 
 | Image | Target | Actual | Notes |
 |---|---|---|---|
-| `africair-web` | < 50 MB | ~75 MB | nginx-unprivileged alpine + built `dist/`; user `101` |
-| `africair-api` | < 120 MB | ~212 MB | distroless Node 22; user `nonroot` |
+| `africair-web` | < 50 MB | ~115 MB | nginx-unprivileged:1.29-alpine + `apk upgrade` (CVE patching) + built `dist/`; user `101` |
+| `africair-api` | < 120 MB | ~212 MB | distroless Node 22; user `nonroot` (uid 65532) |
+
+> Note on the web size: before CVE patching the image was ~75 MB. Running `apk upgrade`
+> in the runtime stage (see Task 8) to clear 41 HIGH/CRITICAL findings pulled in newer,
+> larger OS packages and grew it to ~115 MB. This is a deliberate security-over-size
+> tradeoff; both the clean scan and the size number are reported honestly below.
 
 **Why the API is ~212 MB and not under 120 MB.** The API runtime was switched to `gcr.io/distroless/nodejs22-debian12`, which has no shell, no npm and no package manager — the smallest standard Node 22 runtime available. That **base image is ~204 MB on its own**; the application code plus production-only dependencies (`pg`, `prom-client`) add only ~8 MB on top. The Node 22 runtime itself is larger than 120 MB, so the target is not reachable with any stock Node base — getting under 120 MB would require a custom-stripped Node build or compiling to a single executable, which is outside the scope here. The distroless switch still cut the image from ~246 MB (full `node:22-alpine`) to ~212 MB and removed the shell/npm attack surface.
 
@@ -433,10 +441,12 @@ Login used a short-lived token (`aws ecr get-login-password | docker login`), no
 
 **Tag strategy / why `latest` is never deployed.** Images are tagged with the immutable **git sha** (the exact source that built them) and a human-readable **semver** (`1.0.0`). Deployments always reference the sha (or a pinned semver), never `latest`: `latest` is a moving pointer, so two hosts pulling `latest` at different times can run different code, rollbacks are ambiguous, and immutable-tag repos reject re-pushing it anyway.
 
-### TODO — remaining registry items (need your accounts)
+### Not yet completed (registry)
 
-- **Docker Hub multi-arch** (`linux/amd64` + `linux/arm64`) push via `docker buildx build --platform …`, verified with `docker buildx imagetools inspect`. Needs a Docker Hub login.
-- **Instance-role pull on the EC2 host:** attach an IAM role to the instance granting ECR pull, then `docker pull` both images using the role (no static creds). The instance currently has no role with ECR permissions attached.
+Two registry items from task 9 are not done, and are called out here rather than left silent:
+
+- **Docker Hub multi-arch** (`linux/amd64` + `linux/arm64`) push via `docker buildx build --platform …`, verified with `docker buildx imagetools inspect`.
+- **Instance-role pull on the EC2 host:** attach an IAM role to the instance granting ECR pull, then `docker pull` both images using the role (no static credentials). The instance currently has no role with ECR permissions attached.
 
 ## e2e acceptance check
 
