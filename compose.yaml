@@ -1,0 +1,123 @@
+name: africair
+
+secrets:
+  db_password:
+    file: ./secrets/db_password
+  database_url:
+    file: ./secrets/database_url
+  admin_token:
+    file: ./secrets/admin_token
+  promo_codes:
+    file: ./secrets/promo_codes
+
+networks:
+  africair:
+    driver: bridge
+
+volumes:
+  db_data:
+
+services:
+  db:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_DB: africair
+      POSTGRES_USER: africair_app
+      POSTGRES_PASSWORD_FILE: /run/secrets/db_password
+    secrets:
+      - db_password
+    volumes:
+      - db_data:/var/lib/postgresql/data
+    networks:
+      - africair
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U africair_app -d africair"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+    restart: unless-stopped
+
+  migrate:
+    build:
+      context: .
+      dockerfile: Dockerfile.api
+    image: africair-api:latest
+    # distroless base ENTRYPOINT is /nodejs/bin/node, so pass only the script path
+    command: ["dist/migrate.js"]
+    env_file: config/staging.env
+    secrets:
+      - db_password
+      - database_url
+      - admin_token
+      - promo_codes
+    networks:
+      - africair
+    depends_on:
+      db:
+        condition: service_healthy
+    restart: "no"
+
+  api:
+    image: africair-api:latest
+    env_file: config/staging.env
+    secrets:
+      - db_password
+      - database_url
+      - admin_token
+      - promo_codes
+    networks:
+      - africair
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+    deploy:
+      replicas: 2
+    restart: unless-stopped
+    healthcheck:
+      # distroless has no shell, so use exec-form node (not CMD-SHELL/wget)
+      test: ["CMD", "/nodejs/bin/node", "-e", "require('http').get('http://127.0.0.1:4000/api/healthz',r=>process.exit(r.statusCode===200?0:1)).on('error',()=>process.exit(1))"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
+
+  web:
+    build:
+      context: .
+      dockerfile: Dockerfile.web
+    image: africair-web:latest
+    environment:
+      API_UPSTREAM: http://api:4000
+      APP_ENV: staging
+    networks:
+      - africair
+    ports:
+      - "8080:8080"
+    depends_on:
+      api:
+        condition: service_healthy
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- http://127.0.0.1:8080/healthz || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
+
+  e2e:
+    image: mcr.microsoft.com/playwright:v1.64.0-noble
+    working_dir: /work
+    volumes:
+      - .:/work
+    environment:
+      BASE_URL: http://web:8080
+    networks:
+      - africair
+    depends_on:
+      web:
+        condition: service_healthy
+    command: >
+      sh -c "corepack enable && pnpm install --frozen-lockfile && BASE_URL=http://web:8080 pnpm test:e2e"
+    profiles:
+      - test
+    restart: "no"

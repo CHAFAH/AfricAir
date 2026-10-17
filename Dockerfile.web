@@ -1,0 +1,62 @@
+# syntax=docker/dockerfile:1
+
+ARG VERSION=dev
+ARG GIT_SHA=unknown
+ARG BUILD_DATE=unknown
+
+# ── Stage 1: deps ─────────────────────────────────────────────────────────────
+FROM node:22-alpine AS deps
+
+RUN corepack enable
+
+WORKDIR /app
+
+COPY package.json pnpm-lock.yaml pnpm-workspace.yaml ./
+COPY server/package.json ./server/
+
+RUN --mount=type=cache,id=pnpm,target=/root/.local/share/pnpm/store \
+    pnpm install --frozen-lockfile
+
+# ── Stage 2: test ─────────────────────────────────────────────────────────────
+FROM deps AS test
+
+COPY . .
+
+RUN pnpm check && pnpm test
+
+# ── Stage 3: build ────────────────────────────────────────────────────────────
+FROM test AS build
+
+ARG VERSION
+ARG GIT_SHA
+ARG BUILD_DATE
+
+RUN pnpm build && \
+    printf '{"version":"%s","gitSha":"%s","buildDate":"%s"}' \
+      "$VERSION" "$GIT_SHA" "$BUILD_DATE" > dist/version.json
+
+# ── Stage 4: runtime ──────────────────────────────────────────────────────────
+FROM nginxinc/nginx-unprivileged:1.29-alpine AS runtime
+
+ARG VERSION
+ARG GIT_SHA
+ARG BUILD_DATE
+
+LABEL org.opencontainers.image.source="https://github.com/engineerkg/AfricAir" \
+      org.opencontainers.image.revision="${GIT_SHA}" \
+      org.opencontainers.image.version="${VERSION}" \
+      org.opencontainers.image.created="${BUILD_DATE}"
+
+# Patch OS packages (libcrypto3, libexpat, libpng, c-ares, ...) so trivy HIGH/CRITICAL
+# findings with available fixes are resolved. Briefly switch to root for apk, then back.
+USER root
+RUN apk upgrade --no-cache
+USER 101
+
+COPY --from=build /app/dist /usr/share/nginx/html
+COPY deploy/nginx/templates /etc/nginx/templates
+
+EXPOSE 8080
+
+HEALTHCHECK --interval=30s --timeout=5s --start-period=10s --retries=3 \
+  CMD wget -qO- http://127.0.0.1:8080/healthz || exit 1
