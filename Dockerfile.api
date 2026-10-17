@@ -1,0 +1,53 @@
+# syntax=docker/dockerfile:1
+
+# ── Stage 1: build ────────────────────────────────────────────────────────────
+FROM node:22-alpine AS build
+
+RUN corepack enable
+
+WORKDIR /app
+
+# Copy manifests first for layer-cache efficiency
+COPY package.json pnpm-lock.yaml pnpm-workspace.yaml ./
+COPY server/package.json ./server/
+
+RUN --mount=type=cache,id=pnpm,target=/root/.local/share/pnpm/store \
+    pnpm install --frozen-lockfile
+
+COPY server/ ./server/
+
+RUN pnpm build:api
+
+# ── Stage 2: prod-deps ────────────────────────────────────────────────────────
+FROM node:22-alpine AS prod-deps
+
+WORKDIR /prod
+
+# Copy only the API manifest — no workspace context, so only pg + prom-client install
+COPY server/package.json ./package.json
+
+RUN npm install --omit=dev --ignore-scripts
+
+# ── Stage 3: runtime ──────────────────────────────────────────────────────────
+FROM node:22-alpine AS runtime
+
+LABEL org.opencontainers.image.source="https://github.com/engineerkg/AfricAir" \
+      org.opencontainers.image.revision="" \
+      org.opencontainers.image.version="" \
+      org.opencontainers.image.created=""
+
+WORKDIR /app
+
+COPY --from=prod-deps /prod/node_modules ./node_modules
+COPY --from=build     /app/server/dist   ./dist
+COPY --from=build     /app/server/migrations ./migrations
+COPY server/package.json ./
+
+USER node
+
+EXPOSE 4000 9464
+
+HEALTHCHECK --interval=30s --timeout=5s --start-period=10s --retries=3 \
+  CMD wget -qO- http://localhost:4000/api/healthz || exit 1
+
+CMD ["node", "dist/index.js"]
