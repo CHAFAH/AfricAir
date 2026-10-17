@@ -3,6 +3,8 @@ name: africair
 secrets:
   db_password:
     file: ./secrets/db_password
+  database_url:
+    file: ./secrets/database_url
   admin_token:
     file: ./secrets/admin_token
   promo_codes:
@@ -44,6 +46,7 @@ services:
     env_file: config/staging.env
     secrets:
       - db_password
+      - database_url
       - admin_token
       - promo_codes
     networks:
@@ -58,6 +61,7 @@ services:
     env_file: config/staging.env
     secrets:
       - db_password
+      - database_url
       - admin_token
       - promo_codes
     networks:
