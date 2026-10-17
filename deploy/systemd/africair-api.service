@@ -1,0 +1,18 @@
+[Unit]
+Description=AfricAir Node.js Backend API Engine
+After=network.target postgresql.service
+
+[Service]
+Type=simple
+User=www-data
+WorkingDirectory=/var/www/africair/current
+EnvironmentFile=/var/www/africair/shared/api.env
+ExecStart=/usr/bin/pnpm --filter @africair/api start
+Restart=always
+RestartSec=5
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=africair-api
+
+[Install]
+WantedBy=multi-user.target
