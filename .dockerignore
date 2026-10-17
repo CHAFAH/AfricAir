@@ -1,0 +1,33 @@
+# Dependencies (at every level)
+node_modules
+server/node_modules
+
+# Build output
+dist
+server/dist
+
+# Git
+.git
+.gitignore
+
+# Test artefacts
+test-results
+playwright-report
+
+# Secrets — never in the image
+.env
+.env.*
+!.env.example
+server/.env
+server/.env.*
+!server/.env.example
+secrets
+
+# Docker files themselves (no need to copy)
+Dockerfile*
+compose.yaml
+.dockerignore
+
+# Local dev / editor
+.DS_Store
+*.log
