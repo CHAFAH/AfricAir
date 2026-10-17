@@ -42,7 +42,8 @@ services:
       context: .
       dockerfile: Dockerfile.api
     image: africair-api:latest
-    command: ["node", "dist/migrate.js"]
+    # distroless base ENTRYPOINT is /nodejs/bin/node, so pass only the script path
+    command: ["dist/migrate.js"]
     env_file: config/staging.env
     secrets:
       - db_password
@@ -73,7 +74,8 @@ services:
       replicas: 2
     restart: unless-stopped
     healthcheck:
-      test: ["CMD-SHELL", "wget -qO- http://localhost:4000/api/healthz || exit 1"]
+      # distroless has no shell, so use exec-form node (not CMD-SHELL/wget)
+      test: ["CMD", "/nodejs/bin/node", "-e", "require('http').get('http://127.0.0.1:4000/api/healthz',r=>process.exit(r.statusCode===200?0:1)).on('error',()=>process.exit(1))"]
       interval: 10s
       timeout: 5s
       retries: 5
@@ -96,7 +98,7 @@ services:
         condition: service_healthy
     restart: unless-stopped
     healthcheck:
-      test: ["CMD-SHELL", "wget -qO- http://localhost:8080/healthz || exit 1"]
+      test: ["CMD-SHELL", "wget -qO- http://127.0.0.1:8080/healthz || exit 1"]
       interval: 10s
       timeout: 5s
       retries: 5

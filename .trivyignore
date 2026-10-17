@@ -1,0 +1,25 @@
+# .trivyignore — justified suppressions
+#
+# All entries below are OpenSSL (libssl3) CVEs present in the Debian 12 base of the
+# distroless Node 22 runtime image (gcr.io/distroless/nodejs22-debian12:nonroot).
+#
+# Why these are suppressed rather than fixed:
+#   - Distroless images contain NO package manager (no apt/apk), so OS packages
+#     cannot be upgraded inside our Dockerfile. The only way to receive the patched
+#     libssl3 is for the upstream distroless maintainers to rebuild and republish the
+#     image tag. As of this build that rebuilt tag is not yet available.
+#   - The AfricAir API does not expose any of the affected OpenSSL code paths directly:
+#     TLS termination is handled by nginx (web image) and the load balancer, not by
+#     the Node API, which talks to PostgreSQL over the internal Docker network only.
+#   - These are re-evaluated on every build: when distroless ships the patched base,
+#     remove the corresponding lines and the scan must pass with no suppressions.
+#
+# Fixed upstream in libssl3 3.0.19-1~deb12u2 / 3.0.20-1~deb12u2 (awaiting distroless rebuild):
+CVE-2026-31789
+CVE-2026-28387
+CVE-2026-28388
+CVE-2026-28389
+CVE-2026-28390
+CVE-2026-45447
+# No fix available upstream yet (status: affected); low exploitability in this context:
+CVE-2026-84782
