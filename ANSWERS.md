@@ -166,7 +166,7 @@ All checks were run against the Compose stack on the staging host (`http://98.81
 - Orange **STAGING** environment banner, warning announcement bar, brand "AfricAir Staging".
 - Prices start in **NGN**; the review page shows a **$5** service fee.
 
-*(screenshot: landing page + review page)*
+The staging banner, brand, announcement, database storage and $5 fee are all visible on the status page below (Check 2). The $5 AfricAir service fee is also visible on the review page (Check 4 screenshot).
 
 ### Check 2 — `/#/status`: storage and secret sources
 
@@ -181,13 +181,15 @@ All checks were run against the Compose stack on the staging host (`http://98.81
 
 Storage is "PostgreSQL database" and all three secrets are *Configured* from a **mounted file**.
 
-*(screenshot: /#/status)*
+![Check 2 — status page: staging, PostgreSQL storage, secrets from mounted file](docs/images/project2/check2-status-secrets.png)
 
 ### Check 3 — Promo code booking + admin
 
 Booked a flight with promo code `SAVE10`; the discount appears in the fare breakdown and in the downloaded PDF. Signed in at `/#/admin` with the admin token and the booking is listed.
 
-*(screenshots: review with discount, PDF, /#/admin table)*
+![Check 3 — booking confirmation and PDF download](docs/images/project2/check3-confirmation-pdf.png)
+
+![Check 3 — admin page showing booking JQCFJ2 with SAVE10 promo applied](docs/images/project2/check3-admin-promo.png)
 
 ### Check 4 — Maintenance mode blocks booking
 
@@ -195,7 +197,7 @@ Set `MAINTENANCE_MODE=true` in `config/staging.env`, then `docker compose up -d 
 
 **Why `docker compose restart` is not enough:** `restart` stops and starts the *existing* container with its *existing* configuration — it does not re-read `env_file`. Environment variables are fixed at container creation time, so a restarted container keeps the old values. `docker compose up -d` detects the changed config and **recreates** the container with a fresh environment, which is why maintenance mode only takes effect after `up -d`.
 
-*(screenshot: review page with maintenance notice + disabled button)*
+![Check 4 — review page with maintenance notice and disabled Confirm booking button](docs/images/project2/check4-maintenance-block.png)
 
 ### Check 5 — Live admin-token rotation (no restart)
 
@@ -215,7 +217,7 @@ new-token admin call: 200
 
 **Why it takes effect without a restart:** file secrets are re-read on a timer (`SECRET_REFRESH_SECONDS`), so rotating the mounted file propagates live — the same mechanism that lets a rotated Kubernetes Secret take effect without restarting the pod. An env-var secret is fixed at process start and only changes on recreate. (Contrast with Project 1's systemd `LoadCredential`, which materialises the secret once at service start, so rotating it there *does* require a restart.)
 
-*(screenshot: /#/status showing fingerprint aa373ff9; /#/admin rejecting old token and accepting new)*
+The rotated fingerprint `aa373ff9` is visible on the status page (Check 2 screenshot above), confirming the new token was picked up without a restart. The 401/200 results above are the terminal evidence that the old token is rejected and the new one works.
 
 ### Check 6 — Database outage and recovery
 
@@ -247,7 +249,7 @@ $ curl -s http://localhost:8080/api/config | jq '.secrets.database'
 
 Once the database is healthy again the API's readiness probe flips back to **200** and `/#/status` shows the database **connected** — all without restarting `api`. The readiness endpoint reflects live dependency health, so the load balancer stops and resumes routing automatically; liveness (`/api/healthz`) stayed up the whole time, which is why the container was never killed and recreated.
 
-*(screenshots: /#/status showing database error while db is down; /#/status connected after recovery)*
+Evidence is the terminal output above (`readyz=503` and database `status: error` while down; `readyz=200` and `status: connected` after recovery, with identical `StartedAt` proving `api` was never restarted).
 
 ### Check 7 — No secret values in the container environment
 
