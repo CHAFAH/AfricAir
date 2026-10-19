@@ -1,7 +1,13 @@
 #!/usr/bin/env bash
 set -Eeuo pipefail
 
-trap 'rc=$?; printf "ERROR: line %s: command failed with exit code %s\n" "${BASH_LINENO[0]}" "$rc" >&2; exit "$rc"' ERR
+on_error() {
+  local exit_code=$?
+  printf 'ERROR: line %s: command failed with exit code %s\n' \
+    "${BASH_LINENO[0]}" "$exit_code" >&2
+  exit "$exit_code"
+}
+trap on_error ERR
 
 usage() {
   printf 'Usage: %s <dist-dir> <bucket> <distribution-id>\n' "$0"

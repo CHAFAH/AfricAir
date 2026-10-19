@@ -1,7 +1,13 @@
 #!/usr/bin/env bash
 set -Eeuo pipefail
 
-trap 'rc=$?; printf "ERROR: line %s: command failed with exit code %s\n" "${BASH_LINENO[0]}" "$rc" >&2; exit "$rc"' ERR
+on_error() {
+  local exit_code=$?
+  printf 'ERROR: line %s: command failed with exit code %s\n' \
+    "${BASH_LINENO[0]}" "$exit_code" >&2
+  exit "$exit_code"
+}
+trap on_error ERR
 
 ROOT_DIR=/opt/africair
 RELEASES_DIR="$ROOT_DIR/releases"
@@ -139,7 +145,7 @@ mapfile -t old_releases < <(
 
 for old_release in "${old_releases[@]}"; do
   printf 'Removing old release %s\n' "$old_release"
-  rm -rf -- "$RELEASES_DIR/$old_release"
+  rm -rf -- "${RELEASES_DIR:?}/$old_release"
 done
 
 printf 'Deployment successful: %s\n' "$release_id"
@@ -219,7 +225,7 @@ if [[ -n "$api_artifact" ]]; then
       grep -E '^[0-9]{8}T[0-9]{6}Z-[0-9a-f]{7}$' | sort -r | tail -n +6 || true
   )
   for old_api_release in "${old_api_releases[@]}"; do
-    rm -rf -- "$api_releases/$old_api_release"
+    rm -rf -- "${api_releases:?}/$old_api_release"
   done
   printf 'API deployment successful: %s\n' "$api_release_id"
 fi

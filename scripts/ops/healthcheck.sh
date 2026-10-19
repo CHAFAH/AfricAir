@@ -15,7 +15,12 @@ warn() {
   logger -p user.warning -t "$TAG" -- "WARNING: $*"
 }
 
-trap 'rc=$?; warn "healthcheck script failed at line ${BASH_LINENO[0]} with exit code $rc"; exit "$rc"' ERR
+on_error() {
+  local exit_code=$?
+  warn "healthcheck script failed at line ${BASH_LINENO[0]} with exit code $exit_code"
+  exit "$exit_code"
+}
+trap on_error ERR
 
 install -d -o root -g root -m 0755 "$STATE_DIR"
 

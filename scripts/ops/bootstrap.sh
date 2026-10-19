@@ -2,8 +2,13 @@
 
 set -Eeuo pipefail
 
-trap 'rc=$?; printf "ERROR: command failed at line %s with exit code %s\n" \
-  "${BASH_LINENO[0]}" "$rc" >&2; exit "$rc"' ERR
+on_error() {
+  local exit_code=$?
+  printf 'ERROR: command failed at line %s with exit code %s\n' \
+    "${BASH_LINENO[0]}" "$exit_code" >&2
+  exit "$exit_code"
+}
+trap on_error ERR
 
 if [[ ${EUID} -ne 0 ]]; then
   echo "ERROR: bootstrap.sh must be run as root." >&2
