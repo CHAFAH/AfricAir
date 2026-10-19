@@ -11,7 +11,7 @@ WorkingDirectory=/opt/africair/api/current
 EnvironmentFile=/etc/africair/api.env
 LoadCredential=database_url:/etc/africair/secrets/database_url
 Environment=DATABASE_URL_FILE=%d/database_url
-ExecStart=/usr/bin/node /opt/africair/api/current/server/dist/migrate.js
+ExecStart=/usr/bin/node --preserve-symlinks-main /opt/africair/api/current/server/dist/migrate.js
 NoNewPrivileges=yes
 ProtectSystem=strict
 ProtectHome=yes
