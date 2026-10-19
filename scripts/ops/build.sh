@@ -164,7 +164,7 @@ api_artifact_name="africair-api-${short_sha}.tar.gz"
 api_artifact="$output_dir/$api_artifact_name"
 api_checksum="$api_artifact.sha256"
 
-if ! tar -czf "$api_artifact" -C "$api_stage" server; then
+if ! tar -czf "$api_artifact" -C "$api_stage" server version.json; then
   printf 'ERROR: could not create %s.\n' "$api_artifact_name" >&2
   exit 40
 fi
