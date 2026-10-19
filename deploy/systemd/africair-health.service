@@ -1,0 +1,10 @@
+[Unit]
+Description=AfricAir HTTP health check
+After=network-online.target nginx.service
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+User=root
+Group=root
+ExecStart=/usr/local/libexec/africair-healthcheck

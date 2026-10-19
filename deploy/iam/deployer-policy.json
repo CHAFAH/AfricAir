@@ -1,0 +1,26 @@
+{
+  "Version": "2012-10-17",
+  "Statement": [
+    {
+      "Sid": "ListOnlyAfricAirBucket",
+      "Effect": "Allow",
+      "Action": "s3:ListBucket",
+      "Resource": "arn:aws:s3:::africair-taiwo-981750769980"
+    },
+    {
+      "Sid": "WriteOnlyAfricAirObjects",
+      "Effect": "Allow",
+      "Action": [
+        "s3:PutObject",
+        "s3:DeleteObject"
+      ],
+      "Resource": "arn:aws:s3:::africair-taiwo-981750769980/*"
+    },
+    {
+      "Sid": "InvalidateOnlyAfricAirDistribution",
+      "Effect": "Allow",
+      "Action": "cloudfront:CreateInvalidation",
+      "Resource": "arn:aws:cloudfront::981750769980:distribution/EBEOM9U4WUFE0"
+    }
+  ]
+}

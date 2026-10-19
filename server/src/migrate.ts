@@ -1,4 +1,4 @@
-import { readdirSync, readFileSync } from 'node:fs'
+import { readdirSync, readFileSync, realpathSync } from 'node:fs'
 import { fileURLToPath } from 'node:url'
 import pg from 'pg'
 import { loadSettings, secretReader, type Settings } from './config.js'
@@ -41,7 +41,7 @@ export async function migrate(databaseUrl: string | null, settings: Settings, lo
 }
 
 // CLI: `node dist/migrate.js` (used by the Kubernetes migration Job)
-if (process.argv[1] && fileURLToPath(import.meta.url) === process.argv[1]) {
+if (process.argv[1] && realpathSync(fileURLToPath(import.meta.url)) === realpathSync(process.argv[1])) {
   const settings = loadSettings()
   const databaseUrl = secretReader('DATABASE_URL', process.env, 0)().value
   if (!databaseConfigured(databaseUrl)) {

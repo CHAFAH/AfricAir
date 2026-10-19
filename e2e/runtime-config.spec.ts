@@ -67,6 +67,8 @@ test('environment variables change branding, banners, defaults and features', as
   await expect(page.getByTestId('announcement')).toContainText('Scheduled maintenance tonight')
   await expect(page.getByRole('heading', { level: 1 })).toContainText('Chaque voyage') // DEFAULT_LANGUAGE=fr
   await expect(page.getByLabel('Devise')).toHaveValue('EUR') // DEFAULT_CURRENCY=EUR
+  const mobileMenu = page.locator('.mobile-menu')
+  if (await mobileMenu.isVisible()) await mobileMenu.click()
   await expect(page.locator('a[href="mailto:help@skybridge.test"]').first()).toBeVisible()
   await expect(page.getByRole('button', { name: 'Destinations' })).toHaveCount(0) // FEATURE_DESTINATIONS=false
   await page.goto('/#/destinations')
