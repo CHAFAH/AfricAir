@@ -142,3 +142,148 @@ radius.
    `index.html` is `no-cache` while hashed assets are immutable. If an asset's
    contents changed without its filename changing, fix the build rather than
    invalidating every object.
+
+## Acceptance evidence
+
+The following checks were run against EC2 instance `i-086f7326e4a35c325`
+(`18.234.34.186`) and CloudFront distribution `EBEOM9U4WUFE0`
+(`d3hrq91hjpb64p.cloudfront.net`) on 19 October 2026. Secret values are
+intentionally omitted.
+
+### EC2 health, version and caching
+
+```console
+$ curl -fsS http://127.0.0.1/healthz
+ok
+
+$ curl -fsS http://127.0.0.1/version.json | jq .
+{
+  "commit": "47a9667d292eee38631492e2b7a8786c331674e2",
+  "ref": "devops-submission-taiwo",
+  "builtAt": "2026-10-19T06:23:03Z",
+  "builtBy": "ubuntu@ip-172-31-26-123",
+  "nodeVersion": "v22.23.3"
+}
+
+$ curl -sI http://127.0.0.1/assets/airports-DafaOCNH.js | grep -i cache-control
+Cache-Control: public, max-age=31536000, immutable
+```
+
+The root document returned `Cache-Control: no-cache` plus the required headers:
+
+```console
+X-Content-Type-Options: nosniff
+Referrer-Policy: strict-origin-when-cross-origin
+X-Frame-Options: DENY
+Content-Security-Policy: default-src 'self'; base-uri 'self'; object-src 'none'; frame-ancestors 'none'; form-action 'self'; script-src 'self'; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src 'self' https://fonts.gstatic.com data:; img-src 'self' data: blob:; connect-src 'self'; worker-src 'self' blob:
+Cache-Control: no-cache
+```
+
+### Release layout and rejection/rollback safety
+
+```console
+$ ls -l /opt/africair/current
+lrwxrwxrwx 1 root root 47 Oct 19 06:31 /opt/africair/current -> /opt/africair/releases/20261019T063146Z-47a9667
+
+$ readlink -f /opt/africair/current
+/opt/africair/releases/20261019T063146Z-47a9667
+```
+
+A copied artifact with an intentionally invalid SHA-256 file was rejected with
+a non-zero exit status. Comparing `readlink -f /opt/africair/current` before
+and after printed `PASS: deployment remained unchanged`. A subsequent
+`rollback.sh` run switched atomically to the previous healthy release;
+`/healthz` remained `ok` and `version.json` reported the previous commit. The
+newest healthy artifact was then redeployed.
+
+### Service isolation, API and credentials
+
+```console
+$ sudo -u africair bash -c 'echo test > /etc/x'
+bash: line 1: /etc/x: Permission denied
+
+$ sudo -u africair cat /etc/africair/secrets/admin_token
+cat: /etc/africair/secrets/admin_token: Permission denied
+
+$ systemctl show africair-api.service -p User -p ProtectSystem -p NoNewPrivileges
+User=africair
+ProtectSystem=strict
+NoNewPrivileges=yes
+```
+
+The redacted `/api/config` result was:
+
+```json
+{
+  "appEnv": "staging",
+  "storage": "database",
+  "secrets": {
+    "database": { "status": "connected", "source": "file" },
+    "adminToken": { "configured": true, "source": "file" },
+    "promoCodes": { "count": 2, "source": "file" }
+  }
+}
+```
+
+Both Node listeners were bound to loopback (`127.0.0.1:4000` and
+`127.0.0.1:9464`). An external request to port 9464 failed while public port 80
+continued to return `ok`. Rotating the root-owned admin-token source left the
+active fingerprint at `88944fe4` before restart; after restarting the service
+it changed to `34c516cc`, demonstrating systemd credential-copy semantics.
+
+The staging UI showed PostgreSQL storage and all three credentials sourced from
+files. Maintenance mode disabled booking while enabled. With it disabled, a
+booking using `SAVE10` received the 10% discount, was stored in PostgreSQL, and
+appeared on the token-protected admin page.
+
+### Health timer, log report and static analysis
+
+The systemd health timer ran every minute and logged with the
+`africair-health` tag. The JSON access-log report produced top client IPs,
+status-class counts, top paths, and last-hour requests per minute. ShellCheck
+passed every operations script:
+
+```console
+$ shellcheck scripts/ops/*.sh
+$ echo "$?"
+0
+```
+
+### S3, CloudFront and least privilege
+
+Bucket `africair-taiwo-981750769980` was verified with all four S3 Block Public
+Access values set to `true`, versioning `Enabled`, and default encryption
+`AES256` (SSE-S3). Its bucket policy grants `s3:GetObject` only to the
+CloudFront service principal when the source ARN is:
+
+```text
+arn:aws:cloudfront::981750769980:distribution/EBEOM9U4WUFE0
+```
+
+The OAC-backed distribution redirects HTTP to HTTPS, uses `index.html` as the
+default root object, and attaches `AfricAir-security-headers`. CloudFront
+responses included `X-Cache` and the B5 security headers. Hashed assets returned
+`Cache-Control: public,max-age=31536000,immutable`; `index.html` and
+`version.json` returned `no-cache`.
+
+The `africair-static-deployer` identity successfully listed only the intended
+bucket. Listing another bucket and calling `s3api list-buckets` both returned
+`AccessDenied`, proving that the policy does not grant account-wide S3 access.
+The publishing script uploaded the site and created an invalidation containing
+only `/index.html` and `/version.json`.
+
+The complete Playwright suite passed with:
+
+```console
+$ BASE_URL=https://d3hrq91hjpb64p.cloudfront.net pnpm test:e2e
+# all tests passed
+```
+
+At `/#/status`, the CloudFront deployment correctly reported that the API was
+unreachable and used browser-only static storage. Unlike EC2, it has no
+PostgreSQL-backed bookings, admin view, runtime announcement/maintenance
+settings, or server-side promo validation. S3 stores and returns object bytes;
+any secret placed in a static JavaScript bundle, HTML file or downloadable
+configuration would be readable by every visitor. Secrets therefore require a
+trusted server-side runtime such as the EC2 API (or another serverless compute
+service), not S3 alone.
