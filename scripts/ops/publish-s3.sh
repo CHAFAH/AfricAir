@@ -71,7 +71,9 @@ printf 'Removing stale objects after the new index is live\n'
 aws s3 sync "$dist_dir/" "s3://$bucket/" --delete --only-show-errors
 
 printf 'Invalidating only the mutable entry-point metadata\n'
-aws cloudfront create-invalidation \
+# MSYS/Git Bash otherwise rewrites paths such as /index.html into Windows
+# filesystem paths before aws.exe receives them.
+MSYS_NO_PATHCONV=1 aws cloudfront create-invalidation \
   --distribution-id "$distribution_id" \
   --paths '/index.html' '/version.json' \
   --query 'Invalidation.{Id:Id,Status:Status}' \
