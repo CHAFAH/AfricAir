@@ -26,6 +26,7 @@ install_base_packages() {
     git
     ufw
     jq
+    postgresql
   )
   local missing=()
   local package

@@ -33,6 +33,8 @@ export function loadSettings(env: Env = process.env) {
   return {
     port: number(env.PORT, 4000, 1, 65535),
     metricsPort: number(env.METRICS_PORT, 9464, 1, 65535),
+    apiHost: (env.API_HOST ?? '0.0.0.0').trim() || '0.0.0.0',
+    metricsHost: (env.METRICS_HOST ?? '127.0.0.1').trim() || '127.0.0.1',
     appEnv,
     version: env.APP_VERSION ?? 'dev',
     commit: env.GIT_SHA ?? 'unknown',

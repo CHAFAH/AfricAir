@@ -40,3 +40,18 @@ temporary symlink beside `current`, then uses `mv -T` to rename that prepared
 link over `current`. A rename within the same filesystem is atomic, so Nginx
 sees either the complete old release or the complete new release, never a
 partially updated pointer.
+
+## B8. API service and credential behaviour
+
+`TimeoutStopSec=20s` is deliberately longer than `SHUTDOWN_DELAY_MS=5000`.
+The API first fails readiness, waits five seconds for traffic to drain, then
+closes its HTTP and database connections. The longer systemd timeout lets that
+graceful shutdown finish instead of sending SIGKILL too early.
+
+`LoadCredential=` copies each secret into a protected credential directory
+when the service starts. The unprivileged `africair` user cannot read the
+root-owned source files under `/etc/africair/secrets`. Rotating a source file
+does not change the already loaded credential copy, so the service must be
+restarted before the new admin token takes effect. Once restarted, the API's
+file-secret reader notices future changes to its credential copy according to
+`SECRET_REFRESH_SECONDS`, but systemd only refreshes that copy at service start.

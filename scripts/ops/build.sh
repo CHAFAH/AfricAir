@@ -13,6 +13,8 @@ working directory:
 
   africair-<shortsha>.tar.gz
   africair-<shortsha>.tar.gz.sha256
+  africair-api-<shortsha>.tar.gz
+  africair-api-<shortsha>.tar.gz.sha256
 
 <git-ref> may be a branch, tag, or commit SHA.
 
@@ -110,6 +112,11 @@ if ! (cd "$checkout_dir" && pnpm build); then
   exit 40
 fi
 
+if ! (cd "$checkout_dir" && pnpm build:api); then
+  printf 'ERROR: API production build failed.\n' >&2
+  exit 40
+fi
+
 built_at="$(date -u +'%Y-%m-%dT%H:%M:%SZ')"
 built_by="${BUILD_USER:-${USER:-$(id -un)}@$(hostname)}"
 node_version="$(node --version)"
@@ -145,6 +152,30 @@ if ! (cd "$output_dir" && sha256sum "$artifact_name" > "${artifact_name}.sha256"
   exit 40
 fi
 
+api_stage="$tmp_dir/api-artifact"
+install -d "$api_stage/server"
+if ! (cd "$checkout_dir" && pnpm --filter @africair/api deploy --prod --legacy "$api_stage/server"); then
+  printf 'ERROR: could not assemble production API dependencies.\n' >&2
+  exit 40
+fi
+cp "$checkout_dir/dist/version.json" "$api_stage/version.json"
+
+api_artifact_name="africair-api-${short_sha}.tar.gz"
+api_artifact="$output_dir/$api_artifact_name"
+api_checksum="$api_artifact.sha256"
+
+if ! tar -czf "$api_artifact" -C "$api_stage" server; then
+  printf 'ERROR: could not create %s.\n' "$api_artifact_name" >&2
+  exit 40
+fi
+
+if ! (cd "$output_dir" && sha256sum "$api_artifact_name" > "${api_artifact_name}.sha256"); then
+  printf 'ERROR: could not create %s.sha256.\n' "$api_artifact_name" >&2
+  exit 40
+fi
+
 printf 'Created artifact: %s\n' "$artifact"
 printf 'Created checksum: %s\n' "$checksum"
+printf 'Created API artifact: %s\n' "$api_artifact"
+printf 'Created API checksum: %s\n' "$api_checksum"
 printf 'Commit: %s\n' "$commit"
