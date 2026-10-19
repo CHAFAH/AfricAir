@@ -6,3 +6,6 @@ playwright-report/
 .env
 .env.*
 !.env.example
+# Generated deployment artifacts
+/africair-*.tar.gz
+/africair-*.tar.gz.sha256
