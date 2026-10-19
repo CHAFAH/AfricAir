@@ -200,7 +200,8 @@ if [[ -n "$api_artifact" ]]; then
     exit 7
   fi
 
-  if ! curl --fail --silent --show-error --retry 10 --retry-delay 1 http://127.0.0.1:4000/api/readyz >/dev/null; then
+  if ! curl --fail --silent --show-error --retry 10 --retry-delay 1 --retry-connrefused \
+    http://127.0.0.1:4000/api/readyz >/dev/null; then
     if [[ -n "$api_previous" && -d "$api_previous" ]]; then
       api_rollback="$api_root/.current.rollback.$$"
       ln -sfn "$api_previous" "$api_rollback"
