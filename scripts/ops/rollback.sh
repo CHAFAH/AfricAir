@@ -1,21 +1,52 @@
 #!/usr/bin/env bash
 set -Eeuo pipefail
 
-CURRENT_DIR="/var/www/africair/current"
-cd /var/www/africair/releases
+trap 'rc=$?; printf "ERROR: line %s: command failed with exit code %s\n" "${BASH_LINENO[0]}" "$rc" >&2; exit "$rc"' ERR
 
-# Determine the exact previous timestamp directory folder
-PREVIOUS_RELEASE=$(ls -1t | sed -n '2p')
+ROOT_DIR=/opt/africair
+RELEASES_DIR="$ROOT_DIR/releases"
+CURRENT_LINK="$ROOT_DIR/current"
 
-if [ -z "$PREVIOUS_RELEASE" ]; then
-    echo "CRITICAL FAULT: Deployment pipeline found no historic rollbacks to revert to!"
-    exit 1
+if (( EUID != 0 )); then
+  printf 'ERROR: rollback.sh must run as root.\n' >&2
+  printf 'Usage: sudo %s\n' "$0" >&2
+  exit 1
 fi
 
-echo "ROLLBACK TRIGGERED: Reverting environment state safely to release directory: $PREVIOUS_RELEASE"
-ln -sfn "/var/www/africair/releases/$PREVIOUS_RELEASE" "$CURRENT_DIR.next"
-mv -Tf "$CURRENT_DIR.next" "$CURRENT_DIR"
+current_target="$(readlink -f -- "$CURRENT_LINK" 2>/dev/null || true)"
+current_name="$(basename -- "$current_target")"
 
-sudo systemctl restart africair-api.service
-sudo systemctl reload nginx
-echo "Rollback sequence executed successfully."
+mapfile -t releases < <(
+  find "$RELEASES_DIR" -mindepth 2 -maxdepth 2 -type f -name .healthy \
+    -printf '%h\n' |
+    xargs -r -n1 basename |
+    sort -r
+)
+
+previous=''
+found_current=false
+for release in "${releases[@]}"; do
+  if [[ "$found_current" == true ]]; then
+    previous="$release"
+    break
+  fi
+  if [[ "$release" == "$current_name" ]]; then
+    found_current=true
+  fi
+done
+
+if [[ -z "$previous" ]]; then
+  printf 'ERROR: no previous healthy release is available.\n' >&2
+  exit 2
+fi
+
+previous_dir="$RELEASES_DIR/$previous"
+next_link="$ROOT_DIR/.current.rollback.$$"
+ln -sfn "$previous_dir" "$next_link"
+mv -Tf "$next_link" "$CURRENT_LINK"
+
+nginx -t
+systemctl reload nginx
+
+printf 'Rolled back from %s to %s\n' "$current_name" "$previous"
+printf 'Current: %s\n' "$(readlink -f -- "$CURRENT_LINK")"

@@ -29,4 +29,14 @@ What breaks without them: Web browsers and CDNs aggressively cache static files.
 6. Storage Footprint Metrics
    Total Folder Volume: 1.4M  dist/
    Gzipped Stream Footprint: 450771
-   
+
+## B4. Why the release switch uses a temporary symlink
+
+Running `ln -sfn <release> /opt/africair/current` directly is not a safe
+atomic release switch when `current` already resolves to a directory. Its
+behaviour can depend on path resolution and it exposes the public pointer to
+the link replacement operation itself. The deployment instead creates a new
+temporary symlink beside `current`, then uses `mv -T` to rename that prepared
+link over `current`. A rename within the same filesystem is atomic, so Nginx
+sees either the complete old release or the complete new release, never a
+partially updated pointer.
