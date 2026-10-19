@@ -55,3 +55,90 @@ does not change the already loaded credential copy, so the service must be
 restarted before the new admin token takes effect. Once restarted, the API's
 file-secret reader notices future changes to its credential copy according to
 `SECRET_REFRESH_SECONDS`, but systemd only refreshes that copy at service start.
+
+## Part C. S3 and CloudFront publishing decisions
+
+The publisher uploads content-addressed `assets/` first, then the mutable
+`version.json` and `index.html`, and only then deletes stale objects. Publishing
+the entry point before its referenced assets could briefly send users to files
+that do not exist. Deleting old files before the new index is live creates the
+opposite mixed state: users with the old index can receive 404 responses for
+its assets. Keeping the old assets until the new entry point is present makes
+both generations usable during the transition.
+
+Only `/index.html` and `/version.json` are invalidated. Their names are stable,
+so edge caches must revalidate them after a deployment. Asset filenames contain
+content hashes; changed bytes produce a new URL, while unchanged bytes can stay
+cached for a year. Invalidating `/*` would discard safe immutable cache entries,
+increase origin traffic and cost, and make the deployment slower without
+improving correctness.
+
+## Knowledge check
+
+### 1. `nginx -s reload` versus `systemctl restart nginx`
+
+`nginx -s reload` asks the running master process to validate and load the new
+configuration. It starts new workers and lets old workers finish in-flight
+requests before exiting, so a valid reload is graceful. `systemctl restart`
+stops the service and starts it again. That replaces the master process and can
+interrupt active connections or create a short period with no listener. A
+deployment therefore uses `nginx -t` followed by a reload.
+
+### 2. An unset `RELEASE_DIR` in `rm -rf "$RELEASE_DIR/"`
+
+With `set -u`, expanding an unset `RELEASE_DIR` terminates the script instead
+of turning it into an empty string and risking `rm -rf /`. Additional defenses
+are to use fixed parent directories, quote every expansion, validate that the
+resolved target is a release below `/opt/africair/releases`, reject empty or
+unexpected values, and never construct destructive targets from unchecked
+input. The deployment's strict release-name pattern and bounded `find` depth
+also limit cleanup to known release directories.
+
+### 3. Why a static SPA needs a server-side health check
+
+Static files can exist while the service is still unusable: Nginx may have an
+invalid configuration, its process may be down, the `current` symlink may be
+broken, permissions may deny reads, or the load balancer/CDN route may point at
+the wrong origin. A server-side `/healthz` checks the delivery path that users
+actually depend on and gives monitoring and deployment automation a stable,
+cheap endpoint independent of client-side JavaScript.
+
+### 4. EC2 with Nginx versus S3 with CloudFront
+
+For one million small static requests per month, S3 and CloudFront are normally
+far cheaper because there is no continuously running VM; the current CloudFront
+Free plan includes one million requests and 100 GB of transfer, subject to plan
+eligibility, while storage remains usage-based. A `t3.small` in us-east-1 is
+about $0.0208 per hour, roughly $15.18 for 730 hours before EBS, snapshots and
+internet transfer. Exact totals depend on region, bytes transferred, cache hit
+ratio, free-tier/plan eligibility and taxes, so the AWS calculator should be
+used for a real forecast. Pricing references:
+[CloudFront pricing](https://aws.amazon.com/cloudfront/pricing/),
+[S3 pricing](https://aws.amazon.com/s3/pricing/), and
+[EC2 T3 pricing](https://aws.amazon.com/ec2/instance-types/t3/).
+
+CloudFront and S3 scale automatically across edge locations and include managed
+TLS at the distribution; EC2 needs capacity planning, patching, certificates
+and process monitoring. EC2 rollback is an immediate atomic symlink switch.
+S3 rollback uses object versions or republishes a previous build, followed by
+invalidation of the mutable files. An EC2 host failure or bad server change can
+affect the whole application, while a bad S3 upload is limited to static
+content but can be distributed globally very quickly by CloudFront. Versioning,
+OAC, staged publication and narrowly scoped credentials reduce that blast
+radius.
+
+### 5. CloudFront shows old content after deployment
+
+1. **The mutable files were not invalidated.** Check the CloudFront invalidation
+   history and request `/index.html` and `/version.json`, inspecting `Age`,
+   `ETag`, `Last-Modified` and `X-Cache`. Create the two-path invalidation if it
+   is missing or failed.
+2. **The wrong bucket, prefix or distribution was published.** Compare the
+   commit in the local `dist/version.json`, the S3 object's body/version ID, and
+   `https://<distribution>/version.json`; then inspect the distribution's origin
+   and default behavior.
+3. **The browser still has an old document or asset.** Test in a private window
+   and with `curl`, inspect browser cache/service-worker state, and confirm that
+   `index.html` is `no-cache` while hashed assets are immutable. If an asset's
+   contents changed without its filename changing, fix the build rather than
+   invalidating every object.
