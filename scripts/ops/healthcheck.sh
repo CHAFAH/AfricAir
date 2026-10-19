@@ -15,6 +15,8 @@ warn() {
   logger -p user.warning -t "$TAG" -- "WARNING: $*"
 }
 
+# Invoked indirectly by the ERR trap below.
+# shellcheck disable=SC2317
 on_error() {
   local exit_code=$?
   warn "healthcheck script failed at line ${BASH_LINENO[0]} with exit code $exit_code"
