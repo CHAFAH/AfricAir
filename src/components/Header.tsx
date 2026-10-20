@@ -29,8 +29,8 @@ export function Header({ path, onLanguage, onCurrency }: Props) {
       <button type="button" className={isActive('/')} onClick={() => go('/')}>{t.navFlights}</button>
       {config.features.destinations && <button type="button" className={isActive('/destinations')} onClick={() => go('/destinations')}>{t.navDestinations}</button>}
       {config.features.myTrips && <button type="button" className={isActive('/trips')} onClick={() => go('/trips')}>{t.navTrips}</button>}
-      <a href={`mailto:${config.supportEmail}`} onClick={() => setOpen(false)}>{t.navHelp}</a>
     </nav>
+    <a className="header-help" href={`mailto:${config.supportEmail}`} aria-label={t.navHelp}>{t.navHelp}</a>
     <div className="header-controls">
       <label className="compact-select">
         <Globe2 size={15} aria-hidden="true" /><span className="sr-only">{t.language}</span>

@@ -10,3 +10,6 @@ playwright-report/
 # Generated deployment artifacts
 /africair-*.tar.gz
 /africair-*.tar.gz.sha256
+
+# Local Compose secrets
+secrets/
