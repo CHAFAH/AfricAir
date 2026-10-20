@@ -13,3 +13,6 @@ playwright-report/
 
 # Local Compose secrets
 secrets/
+
+# Local pnpm cache
+.pnpm-store/
