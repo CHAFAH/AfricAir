@@ -48,9 +48,11 @@ LABEL org.opencontainers.image.title="AfricAir web" \
 
 ENV API_UPSTREAM=http://api:4000 \
     APP_ENV=production \
+    NGINX_ENVSUBST_OUTPUT_DIR=/tmp \
     NGINX_ENVSUBST_FILTER='^(API_UPSTREAM|APP_ENV)$'
 
 COPY --from=build --chown=101:101 /app/dist/ /usr/share/nginx/html/
+COPY --chown=101:101 deploy/nginx/nginx.conf /etc/nginx/nginx.conf
 COPY --chown=101:101 deploy/nginx/default.conf.template /etc/nginx/templates/default.conf.template
 
 USER 101
@@ -59,4 +61,3 @@ EXPOSE 8080
 
 HEALTHCHECK --interval=30s --timeout=3s --start-period=5s --retries=3 \
   CMD wget -q -O /dev/null http://127.0.0.1:8080/healthz || exit 1
-
