@@ -16,3 +16,6 @@ secrets/
 
 # Local pnpm cache
 .pnpm-store/
+
+# Local pnpm cache
+.pnpm-store/
