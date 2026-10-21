@@ -44,7 +44,7 @@ TypeScript, Vite, React, frontend assets and source files are excluded from the 
 
 # Web image
 
-The AfricAir web image is below the required 50 MB limit. Its largest layers are:
+The final web image size is 8,746,161 bytes (approximately 8.75 MB), which is below the required 50 MB limit.
 
 1. The pinned `nginxinc/nginx-unprivileged` Alpine base image, containing Nginx, Alpine libraries and runtime utilities.
 2. The copied production `dist/` directory, containing the compiled JavaScript, CSS, airport data and static assets.
@@ -114,10 +114,10 @@ No `.trivyignore` file was needed.
 
 Syft generated SPDX JSON SBOMs for both images.
 
-- africair-web: 72 packages
+- africair-web: 22 packages
 - africair-api: 41 packages
 
-The web image contains more packages because Nginx requires additional operating-system libraries for HTTP, TLS, compression and static-file handling. The API image contains Node.js and only the API production dependencies. Build tools and package managers are excluded from its runtime.
+The API image contains more packages because it includes the Node.js runtime, PostgreSQL and Prometheus production dependencies, and their transitive packages. The web image uses the minimal Nginx unprivileged Alpine slim runtime and contains only the compiled static files and the libraries required by Nginx. Build tools are excluded from both production images.
 
 ### Dockerfile linting
 
