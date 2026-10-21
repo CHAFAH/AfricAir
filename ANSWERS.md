@@ -73,3 +73,19 @@ TypeScript, Vite, React, frontend assets and source files are excluded from the 
 5.62MB | COPY --chown=node:node /prod/api/node_module…
 12.3kB | COPY --chown=node:node /prod/api/package.jso…
 8.19kB | WORKDIR /app
+
+
+
+
+## Project 2 — Task 7.4: API source cache test
+
+# BuildKit cache behaviour
+
+After changing `src/components/Home.tsx`, the dependency-install layers in both Dockerfiles remained cached because `package.json`, `server/package.json`, `pnpm-lock.yaml` and `pnpm-workspace.yaml` had not changed. The source-copy and later test/build layers reran.
+
+After changing `server/src/app.ts`, the API source-copy and API compilation layers reran, while its dependency-install layer remained cached.
+
+The web Dockerfile also reran its shared workspace test and build stages. This is because it copies the complete workspace and `pnpm check` validates both the frontend and API packages. This is conservative but ensures an API TypeScript failure also blocks the web image build. The dependency layer still remained cached because no package manifest or lockfile changed.
+
+A BuildKit cache mount is different from a cached image layer. A cached layer skips the entire Dockerfile instruction when its inputs are unchanged. A cache mount preserves reusable package files, such as pnpm’s content-addressable store, even when the installation instruction must run again.
+
