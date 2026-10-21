@@ -89,3 +89,39 @@ The web Dockerfile also reran its shared workspace test and build stages. This i
 
 A BuildKit cache mount is different from a cached image layer. A cached layer skips the entire Dockerfile instruction when its inputs are unchanged. A cache mount preserves reusable package files, such as pnpm’s content-addressable store, even when the installation instruction must run again.
 
+
+
+## Task 8 — Image scanning, SBOMs and linting
+
+# Vulnerability scanning
+
+Both production images were scanned with Trivy using the `HIGH,CRITICAL`
+severity gate and `--exit-code 1`.
+
+The original web runtime was based on an outdated Nginx/Alpine image and
+reported 59 fixable findings: 57 HIGH and 2 CRITICAL. I updated the runtime
+base image and pinned it by digest. The final result was:
+
+```text
+africair-web:compose
+Total: 0 (HIGH: 0, CRITICAL: 0)
+Exit code: 0
+
+
+No `.trivyignore` file was needed.
+
+# SBOM comparison
+
+Syft generated SPDX JSON SBOMs for both images.
+
+- africair-web: 72 packages
+- africair-api: 41 packages
+
+The web image contains more packages because Nginx requires additional operating-system libraries for HTTP, TLS, compression and static-file handling. The API image contains Node.js and only the API production dependencies. Build tools and package managers are excluded from its runtime.
+
+### Dockerfile linting
+
+Both Dockerfiles passed Hadolint without warnings or errors.
+
+- Dockerfile.web exit code: 0
+- Dockerfile.api exit code: 0
