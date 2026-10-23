@@ -1,0 +1,87 @@
+=== BEFORE API REPLACEMENT ===
+Stale proxy status: 200
+
+=== STALE PROXY AFTER API REPLACEMENT ===
+  % Total    % Received % Xferd  Average Speed  Time    Time    Time   Current
+                                 Dload  Upload  Total   Spent   Left   Speed
+  0      0   0      0   0      0      0      0                              0100    157 100    157   0      0  39045      0                              0100    157 100    157   0      0  38395      0                              0100    157 100    157   0      0  37858      0                              0
+HTTP/1.1 502 Bad Gateway
+Server: nginx/1.31.7
+Date: Fri, 23 Oct 2026 12:23:00 GMT
+Content-Type: text/html
+Content-Length: 157
+Connection: keep-alive
+X-Upstream: 172.18.0.4:4000, 172.18.0.3:4000
+X-Environment: stale-dns-drill
+
+<html>
+<head><title>502 Bad Gateway</title></head>
+<body>
+<center><h1>502 Bad Gateway</h1></center>
+<hr><center>nginx/1.31.7</center>
+</body>
+</html>
+
+=== STALE PROXY ERROR LOG ===
+172.18.0.1 - - [23/Oct/2026:12:21:13 +0000] "GET /api/config HTTP/1.1" 200 704 "-" "curl/8.21.0" "-"
+2026/10/23 12:23:00 [error] 35#35: *14 connect() failed (111: Connection refused) while connecting to upstream, client: 172.18.0.1, server: _, request: "GET /api/config HTTP/1.1", upstream: "http://172.18.0.4:4000/api/config", host: "localhost:18080"
+2026/10/23 12:23:00 [warn] 35#35: *14 upstream server temporarily disabled while connecting to upstream, client: 172.18.0.1, server: _, request: "GET /api/config HTTP/1.1", upstream: "http://172.18.0.4:4000/api/config", host: "localhost:18080"
+2026/10/23 12:23:00 [error] 35#35: *14 connect() failed (111: Connection refused) while connecting to upstream, client: 172.18.0.1, server: _, request: "GET /api/config HTTP/1.1", upstream: "http://172.18.0.3:4000/api/config", host: "localhost:18080"
+2026/10/23 12:23:00 [warn] 35#35: *14 upstream server temporarily disabled while connecting to upstream, client: 172.18.0.1, server: _, request: "GET /api/config HTTP/1.1", upstream: "http://172.18.0.3:4000/api/config", host: "localhost:18080"
+172.18.0.1 - - [23/Oct/2026:12:23:00 +0000] "GET /api/config HTTP/1.1" 502 157 "-" "curl/8.21.0" "-"
+
+=== CORRECT DYNAMIC-DNS PROXY ===
+  % Total    % Received % Xferd  Average Speed  Time    Time    Time   Current
+                                 Dload  Upload  Total   Spent   Left   Speed
+  0      0   0      0   0      0      0      0                              0100    692   0    692   0      0  23802      0                              0100    692   0    692   0      0  23732      0                              0100    692   0    692   0      0  23678      0                              0
+HTTP/1.1 200 OK
+Server: nginx/1.31.7
+Date: Fri, 23 Oct 2026 12:23:00 GMT
+Content-Type: application/json; charset=utf-8
+Transfer-Encoding: chunked
+Connection: keep-alive
+Vary: Accept-Encoding
+Cache-Control: no-store
+X-Upstream: 172.18.0.8:4000
+X-Environment: staging
+
+{"appEnv":"staging","version":"1.0.0","commit":"unknown","brandName":"AfricAir Staging","supportEmail":"support@africair.example","supportPhone":null,"announcement":{"text":"You are on the Docker Compose staging stack","level":"warning"},"defaultLanguage":null,"defaultCurrency":"NGN","serviceFeeUsd":5,"maintenanceMode":false,"features":{"destinations":true,"myTrips":true,"promoCodes":true},"storage":"database","secrets":{"database":{"status":"connected","source":"file"},"adminToken":{"configured":true,"source":"file","loadedAt":"2026-10-23T12:22:24.926Z","fingerprint":"c6f92b77"},"promoCodes":{"count":2,"source":"file","loadedAt":"2026-10-23T12:22:24.927Z","fingerprint":"922a3687"}}}
+=== STALE PROXY ERROR LOG ===
+172.18.0.1 - - [23/Oct/2026:12:21:13 +0000] "GET /api/config HTTP/1.1" 200 704 "-" "curl/8.21.0" "-"
+2026/10/23 12:23:00 [error] 35#35: *14 connect() failed (111: Connection refused) while connecting to upstream, client: 172.18.0.1, server: _, request: "GET /api/config HTTP/1.1", upstream: "http://172.18.0.4:4000/api/config", host: "localhost:18080"
+2026/10/23 12:23:00 [warn] 35#35: *14 upstream server temporarily disabled while connecting to upstream, client: 172.18.0.1, server: _, request: "GET /api/config HTTP/1.1", upstream: "http://172.18.0.4:4000/api/config", host: "localhost:18080"
+2026/10/23 12:23:00 [error] 35#35: *14 connect() failed (111: Connection refused) while connecting to upstream, client: 172.18.0.1, server: _, request: "GET /api/config HTTP/1.1", upstream: "http://172.18.0.3:4000/api/config", host: "localhost:18080"
+2026/10/23 12:23:00 [warn] 35#35: *14 upstream server temporarily disabled while connecting to upstream, client: 172.18.0.1, server: _, request: "GET /api/config HTTP/1.1", upstream: "http://172.18.0.3:4000/api/config", host: "localhost:18080"
+172.18.0.1 - - [23/Oct/2026:12:23:00 +0000] "GET /api/config HTTP/1.1" 502 157 "-" "curl/8.21.0" "-"
+
+=== CORRECT DYNAMIC-DNS PROXY ===
+  % Total    % Received % Xferd  Average Speed  Time    Time    Time   Current
+                                 Dload  Upload  Total   Spent   Left   Speed
+  0      0   0      0   0      0      0      0                              0100    692   0    692   0      0  12028      0                              0100    692   0    692   0      0  12010      0                              0100    692   0    692   0      0  11994      0                              0
+HTTP/1.1 200 OK
+Server: nginx/1.31.7
+Date: Fri, 23 Oct 2026 12:24:44 GMT
+Content-Type: application/json; charset=utf-8
+Transfer-Encoding: chunked
+Connection: keep-alive
+Vary: Accept-Encoding
+Cache-Control: no-store
+X-Upstream: 172.18.0.10:4000
+X-Environment: staging
+
+{"appEnv":"staging","version":"1.0.0","commit":"unknown","brandName":"AfricAir Staging","supportEmail":"support@africair.example","supportPhone":null,"announcement":{"text":"You are on the Docker Compose staging stack","level":"warning"},"defaultLanguage":null,"defaultCurrency":"NGN","serviceFeeUsd":5,"maintenanceMode":false,"features":{"destinations":true,"myTrips":true,"promoCodes":true},"storage":"database","secrets":{"database":{"status":"connected","source":"file"},"adminToken":{"configured":true,"source":"file","loadedAt":"2026-10-23T12:22:25.273Z","fingerprint":"c6f92b77"},"promoCodes":{"count":2,"source":"file","loadedAt":"2026-10-23T12:22:25.274Z","fingerprint":"922a3687"}}}=== CORRECT DYNAMIC-DNS PROXY ===
+  % Total    % Received % Xferd  Average Speed  Time    Time    Time   Current
+                                 Dload  Upload  Total   Spent   Left   Speed
+  0      0   0      0   0      0      0      0                              0100    692   0    692   0      0  49354      0                              0100    692   0    692   0      0  49116      0                              0100    692   0    692   0      0  48911      0                              0
+HTTP/1.1 200 OK
+Server: nginx/1.31.7
+Date: Fri, 23 Oct 2026 12:31:02 GMT
+Content-Type: application/json; charset=utf-8
+Transfer-Encoding: chunked
+Connection: keep-alive
+Vary: Accept-Encoding
+Cache-Control: no-store
+X-Upstream: 172.18.0.10:4000
+X-Environment: staging
+
+{"appEnv":"staging","version":"1.0.0","commit":"unknown","brandName":"AfricAir Staging","supportEmail":"support@africair.example","supportPhone":null,"announcement":{"text":"You are on the Docker Compose staging stack","level":"warning"},"defaultLanguage":null,"defaultCurrency":"NGN","serviceFeeUsd":5,"maintenanceMode":false,"features":{"destinations":true,"myTrips":true,"promoCodes":true},"storage":"database","secrets":{"database":{"status":"connected","source":"file"},"adminToken":{"configured":true,"source":"file","loadedAt":"2026-10-23T12:22:25.273Z","fingerprint":"c6f92b77"},"promoCodes":{"count":2,"source":"file","loadedAt":"2026-10-23T12:22:25.274Z","fingerprint":"922a3687"}}}

@@ -6,3 +6,16 @@ playwright-report/
 .env
 .env.*
 !.env.example
+
+# Generated deployment artifacts
+/africair-*.tar.gz
+/africair-*.tar.gz.sha256
+
+# Local Compose secrets
+secrets/
+
+# Local pnpm cache
+.pnpm-store/
+
+# Local pnpm cache
+.pnpm-store/

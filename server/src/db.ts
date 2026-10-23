@@ -55,7 +55,9 @@ export function connectionConfig(databaseUrl: string | null, settings: Settings)
   } else {
     urlSslMode = process.env.PGSSLMODE ?? null
   }
-  return { connectionString, ssl: sslOption(settings, urlSslMode), connectionTimeoutMillis: 3000 }
+  // Docker Desktop can briefly starve PostgreSQL while Playwright browsers start.
+  // Keep connection failures bounded without reporting a false outage after only three seconds.
+  return { connectionString, ssl: sslOption(settings, urlSslMode), connectionTimeoutMillis: 10_000 }
 }
 
 export function createStore(databaseUrl: string | null, settings: Settings): BookingStore {

@@ -1,0 +1,36 @@
+AfricAir debugging drill 4 - platform mismatch
+
+Environment used for the drill:
+
+  Host: Project 1 EC2 instance
+  Host architecture: linux/amd64 (x86_64)
+  Registry: Amazon ECR, us-east-1
+  Image tag: c57a91a
+
+Observed failure after deliberately selecting the linux/arm64 manifest on the
+AMD64 EC2 host:
+
+  exec format error
+
+Cause:
+
+  The container executable was compiled for ARM64, but the EC2 host CPU and
+  kernel expected AMD64 instructions.
+
+Recovery performed during the EC2 session:
+
+  1. Removed the incompatible container/image selection.
+  2. Pulled the linux/amd64 manifest from the same multi-platform release tag.
+  3. Started the corrected web container.
+  4. Confirmed that /healthz returned HTTP 200 with body "ok".
+
+Permanent prevention:
+
+  Publish an OCI multi-platform index containing linux/amd64 and linux/arm64,
+  and normally let Docker select the host-compatible manifest. For explicit
+  deployment controls, select --platform linux/amd64 on this EC2 host or deploy
+  the verified AMD64 manifest digest.
+
+The EC2 Session Manager terminal output and successful corrected-container
+health check were captured during the drill; this text preserves the observed
+result alongside the other repository evidence.

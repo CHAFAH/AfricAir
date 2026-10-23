@@ -1,0 +1,16 @@
+**/node_modules
+node_modules
+dist
+server/dist
+.git
+.gitignore
+test-results
+playwright-report
+.env
+.env.*
+!.env.example
+!**/.env.example
+*.tar.gz
+*.tar.gz.sha256
+bootstrap-run-*.log
+

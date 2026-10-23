@@ -1,0 +1,147 @@
+name: africair
+
+services:
+  db:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_DB: africair
+      POSTGRES_USER: africair
+      POSTGRES_PASSWORD_FILE: /run/secrets/db_password
+    secrets:
+      - db_password
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U africair -d africair"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+      start_period: 10s
+    networks:
+      - africair_network
+    restart: unless-stopped
+
+  migrate:
+    image: africair-api:compose
+    build:
+      context: .
+      dockerfile: Dockerfile.api
+    command: ["node", "dist/migrate.js"]
+    env_file:
+      - config/staging.env
+    environment:
+      DATABASE_URL_FILE: /run/secrets/database_url
+    secrets:
+      - database_url
+    depends_on:
+      db:
+        condition: service_healthy
+    networks:
+      - africair_network
+    read_only: true
+    tmpfs:
+      - /tmp:rw,noexec,nosuid,size=16m
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+    mem_limit: 128m
+    cpus: 0.5
+    pids_limit: 100
+    restart: "no"
+
+  api:
+    image: africair-api:compose
+    env_file:
+      - config/staging.env
+    environment:
+      DATABASE_URL_FILE: /run/secrets/database_url
+      ADMIN_TOKEN_FILE: /run/secrets/admin_token
+      PROMO_CODES_FILE: /run/secrets/promo_codes
+    secrets:
+      - database_url
+      - admin_token
+      - promo_codes
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+    deploy:
+      replicas: 2
+    networks:
+      - africair_network
+    read_only: true
+    tmpfs:
+      - /tmp:rw,noexec,nosuid,size=16m
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+    mem_limit: 128m
+    cpus: 0.5
+    pids_limit: 100
+    restart: unless-stopped
+
+  web:
+    image: africair-web:compose
+    build:
+      context: .
+      dockerfile: Dockerfile.web
+    environment:
+      API_UPSTREAM: http://api:4000
+      APP_ENV: staging
+    ports:
+      - "8080:8080"
+    depends_on:
+      api:
+        condition: service_healthy
+    networks:
+      - africair_network
+    read_only: true
+    tmpfs:
+      - /tmp:rw,noexec,nosuid,size=16m
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+    mem_limit: 128m
+    cpus: 0.5
+    pids_limit: 100
+    restart: unless-stopped
+
+  e2e:
+    image: mcr.microsoft.com/playwright:v1.64.0-noble
+    profiles:
+      - test
+    working_dir: /work
+    volumes:
+      - .:/work
+      - e2e_node_modules:/work/node_modules
+    environment:
+      BASE_URL: http://web:8080
+    command:
+      - /bin/bash
+      - -lc
+      - corepack enable && pnpm install --frozen-lockfile && pnpm test:e2e --workers=1
+    depends_on:
+      web:
+        condition: service_healthy
+    networks:
+      - africair_network
+
+secrets:
+  db_password:
+    file: ./secrets/db_password
+  database_url:
+    file: ./secrets/database_url
+  admin_token:
+    file: ./secrets/admin_token
+  promo_codes:
+    file: ./secrets/promo_codes
+
+volumes:
+  postgres_data:
+  e2e_node_modules:
+
+networks:
+  africair_network:
+    driver: bridge

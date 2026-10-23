@@ -1,0 +1,95 @@
+=== HTTP RESPONSE ===
+  % Total    % Received % Xferd  Average Speed  Time    Time    Time   Current
+                                 Dload  Upload  Total   Spent   Left   Speed
+  0      0   0      0   0      0      0      0                              0100    153 100    153   0      0  20672      0                              0100    153 100    153   0      0  20498      0                              0100    153 100    153   0      0  20348      0                              0
+HTTP/1.1 403 Forbidden
+Server: nginx/1.31.7
+Date: Fri, 23 Oct 2026 04:57:46 GMT
+Content-Type: text/html
+Content-Length: 153
+Connection: keep-alive
+Cache-Control: no-cache
+X-Content-Type-Options: nosniff
+X-Frame-Options: DENY
+Referrer-Policy: strict-origin-when-cross-origin
+Content-Security-Policy: default-src 'self'; base-uri 'self'; object-src 'none'; frame-ancestors 'none'; form-action 'self'; script-src 'self'; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src 'self' https://fonts.gstatic.com data:; img-src 'self' data: blob:; connect-src 'self'; worker-src 'self' blob:
+X-Environment: drill
+
+<html>
+<head><title>403 Forbidden</title></head>
+<body>
+<center><h1>403 Forbidden</h1></center>
+<hr><center>nginx/1.31.7</center>
+</body>
+</html>
+
+=== NGINX LOG ===
+/docker-entrypoint.sh: /docker-entrypoint.d/ is not empty, will attempt to perform configuration
+/docker-entrypoint.sh: Looking for shell scripts in /docker-entrypoint.d/
+/docker-entrypoint.sh: Launching /docker-entrypoint.d/10-listen-on-ipv6-by-default.sh
+10-listen-on-ipv6-by-default.sh: info: Getting the checksum of /etc/nginx/conf.d/default.conf
+10-listen-on-ipv6-by-default.sh: info: /etc/nginx/conf.d/default.conf differs from the packaged version
+/docker-entrypoint.sh: Sourcing /docker-entrypoint.d/15-local-resolvers.envsh
+/docker-entrypoint.sh: Launching /docker-entrypoint.d/20-envsubst-on-templates.sh
+20-envsubst-on-templates.sh: Running envsubst on /etc/nginx/templates/default.conf.template to /tmp/default.conf
+/docker-entrypoint.sh: Launching /docker-entrypoint.d/30-tune-worker-processes.sh
+/docker-entrypoint.sh: Configuration complete; ready for start up
+2026/10/23 04:57:05 [notice] 1#1: using the "epoll" event method
+2026/10/23 04:57:05 [notice] 1#1: nginx/1.31.7
+2026/10/23 04:57:05 [notice] 1#1: built by gcc 15.2.0 (Alpine 15.2.0) 
+2026/10/23 04:57:05 [notice] 1#1: OS: Linux 6.18.54.1-microsoft-standard-WSL2
+2026/10/23 04:57:05 [notice] 1#1: getrlimit(RLIMIT_NOFILE): 1048576:1048576
+2026/10/23 04:57:05 [notice] 1#1: start worker processes
+2026/10/23 04:57:05 [notice] 1#1: start worker process 35
+2026/10/23 04:57:05 [notice] 1#1: start worker process 36
+2026/10/23 04:57:05 [notice] 1#1: start worker process 37
+2026/10/23 04:57:05 [notice] 1#1: start worker process 38
+2026/10/23 04:57:05 [notice] 1#1: start worker process 39
+2026/10/23 04:57:05 [notice] 1#1: start worker process 40
+2026/10/23 04:57:05 [notice] 1#1: start worker process 41
+2026/10/23 04:57:05 [notice] 1#1: start worker process 42
+2026/10/23 04:57:46 [error] 37#37: *3 "/usr/share/nginx/html/index.html" is forbidden (13: Permission denied), client: 172.17.0.1, server: _, request: "GET / HTTP/1.1", host: "localhost:18080"
+172.17.0.1 - - [23/Oct/2026:04:57:46 +0000] "GET / HTTP/1.1" 403 153 "-" "curl/8.21.0" "-"
+=== CORRECT RUNTIME USER AND OWNERSHIP ===
+uid=101(nginx) gid=101(nginx) groups=101(nginx)
+drwxr-xr-x    1 root     root          4096 Oct 21 22:59 /usr/share/nginx/html
+-rw-r--r--    1 nginx    nginx          805 Oct 21 22:59 /usr/share/nginx/html/index.html
+
+=== FIXED HTTP RESPONSE ===
+  % Total    % Received % Xferd  Average Speed  Time    Time    Time   Current
+                                 Dload  Upload  Total   Spent   Left   Speed
+  0      0   0      0   0      0      0      0                              0100    805 100    805   0      0 151.9k      0                              0100    805 100    805   0      0 148.9k      0                              0100    805 100    805   0      0 147.1k      0                              0
+HTTP/1.1 200 OK
+Server: nginx/1.31.7
+Date: Fri, 23 Oct 2026 05:01:12 GMT
+Content-Type: text/html
+Content-Length: 805
+Last-Modified: Wed, 21 Oct 2026 22:59:22 GMT
+Connection: keep-alive
+ETag: "6ad943ca-325"
+Cache-Control: no-cache
+X-Content-Type-Options: nosniff
+X-Frame-Options: DENY
+Referrer-Policy: strict-origin-when-cross-origin
+Content-Security-Policy: default-src 'self'; base-uri 'self'; object-src 'none'; frame-ancestors 'none'; form-action 'self'; script-src 'self'; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src 'self' https://fonts.gstatic.com data:; img-src 'self' data: blob:; connect-src 'self'; worker-src 'self' blob:
+X-Environment: drill-fixed
+Accept-Ranges: bytes
+
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta name="theme-color" content="#0B5B5A" />
+    <meta name="description" content="AfricAir — seamless flight booking across Africa." />
+    <title>AfricAir — Africa, within reach</title>
+    <script type="module" crossorigin src="/assets/index-DUoIHwjb.js"></script>
+    <link rel="modulepreload" crossorigin href="/assets/react-CpYK3H_K.js">
+    <link rel="modulepreload" crossorigin href="/assets/airports-BrwcO3ZA.js">
+    <link rel="modulepreload" crossorigin href="/assets/pdf-o1MWN_TF.js">
+    <link rel="stylesheet" crossorigin href="/assets/index-BAmykqub.css">
+  </head>
+  <body>
+    <div id="root"></div>
+  </body>
+</html>
