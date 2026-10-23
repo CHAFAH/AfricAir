@@ -1,0 +1,40 @@
+=== TABLES BEFORE MIGRATION ===
+Did not find any relations.
+
+=== API LOG ===
+{"time":"2026-10-23T05:27:43.998Z","level":"info","msg":"api listening","port":4000,"metricsPort":9464,"appEnv":"drill","version":"dev","database":"configured","adminToken":"none","promoCodes":"none"}
+{"time":"2026-10-23T05:29:33.933Z","level":"error","msg":"database operation failed","error":"relation \"bookings\" does not exist"}
+{"time":"2026-10-23T05:29:33.935Z","level":"error","msg":"request","method":"POST","route":"/api/bookings","status":503,"ms":36}
+  % Total    % Received % Xferd  Average Speed  Time    Time    Time   Current
+                                 Dload  Upload  Total   Spent   Left   Speed
+  0      0   0      0   0      0      0      0                              0100    628   0     44 100    584   2367  31426                              0100    628   0     44 100    584   2353  31231                              0100    628   0     44 100    584   2340  31070                              0
+HTTP/1.1 503 Service Unavailable
+Content-Type: application/json; charset=utf-8
+Cache-Control: no-store
+Date: Fri, 23 Oct 2026 05:35:00 GMT
+Connection: keep-alive
+Keep-Alive: timeout=5
+Transfer-Encoding: chunked
+
+{"error":"bookings database is unavailable"}{"level":"info","msg":"applied migration 001_init"}
+{"level":"info","msg":"1 migration(s) applied"}
+Migration exit code: 0
+               List of relations
+ Schema |       Name        | Type  |  Owner   
+--------+-------------------+-------+----------
+ public | bookings          | table | africair
+ public | schema_migrations | table | africair
+(2 rows)
+
+  % Total    % Received % Xferd  Average Speed  Time    Time    Time   Current
+                                 Dload  Upload  Total   Spent   Left   Speed
+  0      0   0      0   0      0      0      0                              0100    627   0     43 100    584   2342  31813                              0100    627   0     43 100    584   2332  31684                              0100    627   0     43 100    584   2322  31545                              0
+HTTP/1.1 201 Created
+Content-Type: application/json; charset=utf-8
+Cache-Control: no-store
+Date: Fri, 23 Oct 2026 05:39:03 GMT
+Connection: keep-alive
+Keep-Alive: timeout=5
+Transfer-Encoding: chunked
+
+{"reference":"DRL234","storage":"database"}
