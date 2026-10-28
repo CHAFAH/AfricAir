@@ -74,7 +74,8 @@ jobs:
           helm template africair deploy/helm/africair -f "$c" -f gitops/values/africair-production.yaml | kubeconform
           helm lint gitops/platform
           helm template platform gitops/platform | kubeconform
-          cat gitops/apps/*.yaml gitops/bootstrap/*.yaml | kubeconform
+          # one document stream: `---` between files, or the last document of one file merges with the next
+          for f in gitops/apps/*.yaml gitops/bootstrap/*.yaml; do cat "$f"; echo "---"; done | kubeconform
       - name: promtool test rules
         run: |
           docker run --rm --entrypoint promtool -v "$PWD/gitops/platform/alerts:/a" -w /a/tests \
