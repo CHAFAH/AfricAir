@@ -1,7 +1,10 @@
-# AfricAir staging on EKS (Project 4), plus the Project 5 additions (platform node group, Argo CD
-# bootstrap, secret containers for Argo CD, Grafana and Alertmanager, the production app secret).
-
-data "aws_caller_identity" "current" {}
+# The single root module: ONE `terraform apply` creates everything AfricAir needs on AWS.
+#   module.foundation  Projects 1-3: ECR, CI OIDC roles, S3 + CloudFront, EC2 hosts, deploy bucket, budget
+#   module.network     VPC, subnets, NAT                         (Project 4)
+#   module.eks         EKS, node groups, add-ons, access entries (Projects 4-5)
+#   module.database    RDS PostgreSQL 16                         (Project 4)
+#   module.platform    secrets, Pod Identity, controllers, gp3, optional Argo CD (Projects 4-5)
+# Only the state bucket (../../bootstrap) is created beforehand.
 
 locals {
   name = "africair-${var.team}-staging"
@@ -39,6 +42,18 @@ locals {
   )
 }
 
+module "foundation" {
+  source              = "../../modules/foundation"
+  owner               = var.owner
+  budget_email        = var.budget_email
+  monthly_budget_usd  = var.monthly_budget_usd
+  ssh_cidrs           = var.ssh_cidrs
+  github_repository   = var.github_repository
+  circleci_org_id     = var.circleci_org_id
+  circleci_project_id = var.circleci_project_id
+  tags                = { Project = "africair", ManagedBy = "terraform" }
+}
+
 module "network" {
   source       = "../../modules/network"
   name         = local.name
@@ -53,7 +68,7 @@ module "eks" {
   private_subnet_ids   = module.network.private_subnet_ids
   public_access_cidrs  = var.team_cidrs
   admin_principal_arns = var.admin_principal_arns
-  ci_role_arn          = var.ci_role_arn
+  ci_role_arn          = coalesce(var.ci_role_arn, module.foundation.github_ci_role_arn)
   ci_namespaces        = ["africair-staging"]
   node_groups          = local.node_groups
   tags                 = local.tags
@@ -78,8 +93,8 @@ module "platform" {
   rds_master_secret_arn = module.database.master_secret_arn
   ssm_db_prefix         = "/africair/staging/db"
   app_environments      = var.enable_production_namespace ? ["staging", "production"] : ["staging"]
-  platform_secrets      = var.enable_argocd ? ["argocd", "grafana", "alertmanager"] : []
-  backup_bucket_name    = "${local.name}-backups-${data.aws_caller_identity.current.account_id}"
+  platform_secrets      = ["argocd", "grafana", "alertmanager"]
+  backup_bucket_name    = "${local.name}-backups-${module.foundation.account_id}"
   backup_environment    = "staging"
   install_controllers   = var.install_controllers_with_terraform
   argocd = {
@@ -116,9 +131,4 @@ resource "aws_acm_certificate_validation" "ingress" {
   count                   = var.domain_name == null ? 0 : 1
   certificate_arn         = aws_acm_certificate.ingress[0].arn
   validation_record_fqdns = [for r in aws_route53_record.acm_validation : r.fqdn]
-}
-
-data "aws_ecr_repository" "app" {
-  for_each = toset(["africair-web", "africair-api"]) # created by envs/shared (Project 2)
-  name     = each.value
 }

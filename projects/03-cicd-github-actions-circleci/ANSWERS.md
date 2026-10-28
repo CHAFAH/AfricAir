@@ -13,7 +13,7 @@
 | `deploy/ec2/` | What runs on each host: a Compose stack using the ECR images; secrets come from Secrets Manager through the instance role |
 | `deploy/iam/*.json` | GitHub and CircleCI trust policies and the CI deployer policy (rendered by `infra/terraform/modules/ci-oidc`) |
 
-**Targets.** `infra/terraform/envs/shared` creates one small EC2 container host per environment
+**Targets.** Terraform (`modules/foundation`, applied from `envs/staging`) creates one small EC2 container host per environment
 (`Env=staging`, `Env=production`). Each runs the same two images, so `/version.json` and
 `/api/config` show exactly which commit is live. Project 4 moves staging to EKS. From then on,
 Project 5's Argo CD deploys it from `gitops/` and CI only bumps the image tag there (`gitops-bump`).
@@ -29,9 +29,9 @@ Project 5's Argo CD deploys it from `gitops/` and CI only bumps the image tag th
 
 ## Setup checklist
 
-1. `terraform -chdir=infra/terraform/envs/shared apply`. Outputs: `github_ci_role_arn`,
-   `github_production_role_arn`, `circleci_staging_role_arn`, `circleci_production_role_arn`,
-   `ecr_repository_urls`, `deploy_bucket`.
+1. `make tf-apply` (one apply for everything). Outputs: `ci_role_arns` (`github-ci`,
+   `github-production`, `circleci-staging`, `circleci-production`), `ecr_repository_urls`,
+   `deploy_bucket`.
 2. GitHub, *Settings → Variables*: `AWS_REGION`, `AWS_CI_ROLE_ARN`, `AWS_PRODUCTION_ROLE_ARN`. These
    are role ARNs, not secrets, and no AWS keys are stored anywhere.
 3. GitHub, *Environments*:

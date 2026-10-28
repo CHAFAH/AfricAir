@@ -1,8 +1,3 @@
-variable "region" {
-  type    = string
-  default = "eu-west-1"
-}
-
 variable "owner" {
   description = "Owner tag (Project 1 B1)."
   type        = string
@@ -36,4 +31,10 @@ variable "monthly_budget_usd" {
 
 variable "budget_email" {
   type = string
+}
+
+variable "tags" {
+  description = "Base tags (Project, ManagedBy, ...); Owner is added here."
+  type        = map(string)
+  default     = {}
 }

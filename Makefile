@@ -8,10 +8,10 @@ TF           ?= terraform
 NS           ?= africair-staging
 RELEASE      ?= africair
 CHART        := deploy/helm/africair
-VALUES       ?= $(CHART)/values-staging.local.yaml
+VALUES       ?= gitops/values/cluster.yaml
 TAG          ?= $(shell git rev-parse HEAD)
 
-.PHONY: help tf-init tf-plan tf-apply kubeconfig cluster-secret-stores helm-lint helm-install destroy
+.PHONY: help tf-init tf-plan tf-apply configure kubeconfig cluster-secret-stores helm-lint helm-install destroy
 
 help:
 	@grep -E '^[a-z-]+:.*?## ' $(MAKEFILE_LIST) | awk -F':.*?## ' '{printf "  %-22s %s\n", $$1, $$2}'
@@ -26,11 +26,14 @@ tf-plan: tf-init ## fmt, validate, tflint, trivy, then plan (writes $(ENV_DIR)/t
 	trivy config --severity HIGH,CRITICAL --exit-code 1 infra/terraform
 	$(TF) -chdir=$(ENV_DIR) plan -out=tfplan
 
-# Two phases on the first run: the Kubernetes/Helm providers need the cluster to exist before they can plan
-# anything inside it. Later runs: the second command alone.
-tf-apply: tf-init ## apply (network, EKS, RDS first; then the platform module)
-	$(TF) -chdir=$(ENV_DIR) apply -target=module.network -target=module.eks -target=module.database
-	$(TF) -chdir=$(ENV_DIR) apply
+# One apply creates everything. The Helm and Kubernetes providers are configured lazily, so their resources
+# are applied after the cluster exists within the same run.
+tf-apply: tf-init ## apply everything (plan from tf-plan if present)
+	$(TF) -chdir=$(ENV_DIR) apply $(if $(wildcard $(ENV_DIR)/tfplan),tfplan)
+	@rm -f $(ENV_DIR)/tfplan
+
+configure: ## write the Terraform outputs into the Helm and GitOps values (cluster-specific values)
+	scripts/configure-from-terraform.sh $(ENV_DIR)
 
 kubeconfig: ## point kubectl at the cluster
 	$$($(TF) -chdir=$(ENV_DIR) output -raw kubeconfig_command)
@@ -40,12 +43,12 @@ cluster-secret-stores: kubeconfig ## ClusterSecretStores (Project 4; Argo CD own
 	kubectl wait --for=condition=Ready clustersecretstore/aws-secrets-manager clustersecretstore/aws-parameter-store --timeout=60s
 
 helm-lint: ## helm lint + kubeconform on the rendered chart
-	helm lint $(CHART) -f $(CHART)/values-staging.yaml
-	helm template $(RELEASE) $(CHART) -n $(NS) -f $(CHART)/values-staging.yaml | \
+	helm lint $(CHART) -f $(CHART)/values-staging.yaml -f $(VALUES)
+	helm template $(RELEASE) $(CHART) -n $(NS) -f $(CHART)/values-staging.yaml -f $(VALUES) | \
 	  kubeconform -strict -summary -schema-location default \
 	    -schema-location 'https://raw.githubusercontent.com/datreeio/CRDs-catalog/main/{{.Group}}/{{.ResourceKind}}_{{.ResourceAPIVersion}}.json'
 
-helm-install: kubeconfig ## install/upgrade the app (VALUES holds registry, secret ARN, bucket, host)
+helm-install: kubeconfig ## install/upgrade the app (cluster values from `make configure`)
 	kubectl create namespace $(NS) --dry-run=client -o yaml | kubectl apply -f -
 	# The Load Balancer Controller injects readiness gates: a rollout waits until the ALB sees new pods healthy.
 	kubectl label namespace $(NS) elbv2.k8s.aws/pod-readiness-gate-inject=enabled --overwrite

@@ -3,7 +3,6 @@ gitops:
   enabled: true
 
 image:
-  registry: 123456789012.dkr.ecr.eu-west-1.amazonaws.com
   tag: "0000000000000000000000000000000000000000"   # quoted: an all-digit SHA would be a YAML number
 
 web:
@@ -23,17 +22,13 @@ api:
 
 secrets:
   appSecretName: africair/staging/app
-  dbMasterSecretArn: arn:aws:secretsmanager:eu-west-1:123456789012:secret:rds!db-00000000-0000-0000-0000-000000000000-AbCdEf
-  dbParameterPrefix: /africair/staging/db
 
 ingress:
   groupName: africair
   host: ""            # staging.<domain>
-  certificateArn: ""
 
 backup:
   enabled: true
-  bucket: africair-team1-staging-backups-123456789012
   prefix: africair/staging
 
 metrics:

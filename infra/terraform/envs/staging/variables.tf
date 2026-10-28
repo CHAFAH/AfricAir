@@ -28,7 +28,7 @@ variable "admin_principal_arns" {
 }
 
 variable "ci_role_arn" {
-  description = "Project 3 CI role (envs/shared output github_ci_role_arn): edit rights in africair-staging."
+  description = "Override for the CI role given edit rights in africair-staging (default: the github-ci role created here)."
   type        = string
   default     = null
 }
@@ -54,7 +54,7 @@ variable "install_controllers_with_terraform" {
 variable "enable_platform_node_group" {
   description = "Project 5: tainted platform node group for Argo CD and monitoring."
   type        = bool
-  default     = false
+  default     = true
 }
 
 variable "enable_argocd" {
@@ -66,5 +66,45 @@ variable "enable_argocd" {
 variable "enable_production_namespace" {
   description = "Project 5: create the africair/production/app secret container for the production Application."
   type        = bool
-  default     = false
+  default     = true
+}
+
+# --- Projects 1-3 (module.foundation) -----------------------------------------------------------
+variable "owner" {
+  description = "Owner tag on the Project 1-3 resources."
+  type        = string
+}
+
+variable "budget_email" {
+  description = "Receives the AWS Budget alerts (forecast > 80%, actual > 100%)."
+  type        = string
+}
+
+variable "monthly_budget_usd" {
+  description = "Monthly budget. EKS staging alone is ~$9-14/day, so $10 only suits Projects 1-3."
+  type        = string
+  default     = "400"
+}
+
+variable "ssh_cidrs" {
+  description = "Your IP/32 for SSH to the Project 1 server; [] = Session Manager only."
+  type        = list(string)
+  default     = []
+}
+
+variable "github_repository" {
+  description = "owner/name: the only repository whose workflows may assume the CI roles."
+  type        = string
+  default     = "CHAFAH/AfricAir"
+}
+
+variable "circleci_org_id" {
+  description = "CircleCI organisation ID; null = no CircleCI roles."
+  type        = string
+  default     = null
+}
+
+variable "circleci_project_id" {
+  type    = string
+  default = null
 }

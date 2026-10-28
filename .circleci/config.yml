@@ -6,7 +6,7 @@ version: 2.1
 #   tag vX.Y.Z:   promote (re-tag the same digests) → ⏸ hold (approval) → deploy production (restricted context)
 # Project settings: enable "Auto-cancel redundant workflows" (new pushes cancel older runs on the same branch,
 # never on main); create contexts "africair-staging" and "africair-production" (the latter restricted to a
-# security group) with AWS_ROLE_ARN set to the matching role from infra/terraform/envs/shared.
+# security group) with AWS_ROLE_ARN set to the matching role from `terraform output ci_role_arns` (infra/terraform/envs/staging).
 
 orbs:
   aws-cli: circleci/aws-cli@5.1.1

@@ -17,7 +17,7 @@ spec:
       path: deploy/helm/africair
       helm:
         releaseName: africair
-        valueFiles: [$values/gitops/values/africair-production.yaml]
+        valueFiles: [$values/gitops/values/cluster.yaml, $values/gitops/values/africair-production.yaml]
     - repoURL: https://github.com/CHAFAH/AfricAir.git
       targetRevision: main
       ref: values

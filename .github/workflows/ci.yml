@@ -52,7 +52,7 @@ jobs:
       - name: Terraform fmt, validate, tflint, trivy config
         run: |
           terraform fmt -check -recursive infra/terraform
-          for d in bootstrap envs/shared envs/staging; do
+          for d in bootstrap envs/staging; do
             terraform -chdir="infra/terraform/$d" init -backend=false -input=false >/dev/null
             terraform -chdir="infra/terraform/$d" validate
           done
@@ -67,10 +67,11 @@ jobs:
             docker run --rm -i ghcr.io/yannh/kubeconform:v0.7.0 -strict -summary -schema-location default \
               -schema-location 'https://raw.githubusercontent.com/datreeio/CRDs-catalog/main/{{.Group}}/{{.ResourceKind}}_{{.ResourceAPIVersion}}.json'
           }
-          helm lint deploy/helm/africair -f deploy/helm/africair/values-staging.yaml
-          helm template africair deploy/helm/africair -f deploy/helm/africair/values-staging.yaml | kubeconform
-          helm template africair deploy/helm/africair -f gitops/values/africair-staging.yaml | kubeconform
-          helm template africair deploy/helm/africair -f gitops/values/africair-production.yaml | kubeconform
+          c=gitops/values/cluster.yaml
+          helm lint deploy/helm/africair -f deploy/helm/africair/values-staging.yaml -f "$c"
+          helm template africair deploy/helm/africair -f deploy/helm/africair/values-staging.yaml -f "$c" | kubeconform
+          helm template africair deploy/helm/africair -f "$c" -f gitops/values/africair-staging.yaml | kubeconform
+          helm template africair deploy/helm/africair -f "$c" -f gitops/values/africair-production.yaml | kubeconform
           helm lint gitops/platform
           helm template platform gitops/platform | kubeconform
           cat gitops/apps/*.yaml gitops/bootstrap/*.yaml | kubeconform

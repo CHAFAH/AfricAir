@@ -102,7 +102,7 @@ done
 docker buildx imagetools inspect <dockerhub-user>/africair-api:1.0.0   # two platforms
 ```
 
-To Amazon ECR (the repositories come from `infra/terraform/envs/shared`, and are immutable with
+To Amazon ECR (the repositories come from Terraform `modules/foundation`, and are immutable with
 scan-on-push):
 
 ```bash

@@ -2,20 +2,26 @@
 region = "eu-west-1"
 team   = "team1"
 
-# 1.33 entered extended support 14 months after its May 2025 release. Use the newest STANDARD version:
+# Newest EKS version in STANDARD support (1.33 left standard support 14 months after May 2025):
 #   aws eks describe-cluster-versions --status STANDARD_SUPPORT --query 'clusterVersions[].clusterVersion'
 kubernetes_version = "1.35"
 
-team_cidrs           = ["203.0.113.10/32"]
-admin_principal_arns = ["arn:aws:iam::123456789012:role/africair-team1-admin"]
-ci_role_arn          = "arn:aws:iam::123456789012:role/africair-github-ci" # envs/shared output
+# Your public IP(s): curl -s https://checkip.amazonaws.com
+team_cidrs = ["203.0.113.10/32"]
+# Who gets cluster admin: your SSO/IAM role ARN (aws sts get-caller-identity → the role, not the session)
+admin_principal_arns = ["arn:aws:iam::123456789012:role/AWSReservedSSO_AdministratorAccess_0123456789abcdef"]
 
-# Optional: a domain with a Route 53 hosted zone (ACM DNS validation)
+# Projects 1-3
+owner        = "your-name"
+budget_email = "you@example.com"
+# ssh_cidrs  = ["203.0.113.10/32"]    # SSH to the Project 1 server; empty = Session Manager only
+github_repository = "CHAFAH/AfricAir"
+# circleci_org_id     = "00000000-0000-0000-0000-000000000000"   # enables the CircleCI roles
+# circleci_project_id = "00000000-0000-0000-0000-000000000000"
+
+# Optional: a domain with a Route 53 hosted zone (HTTPS on the ALB, hosts staging./argocd./grafana.)
 # domain_name    = "africair.example.com"
 # hosted_zone_id = "Z0123456789ABCDEFGHIJ"
 
-# Project 5
-# enable_platform_node_group         = true
-# enable_argocd                      = true
-# enable_production_namespace        = true
-# install_controllers_with_terraform = false   # after Argo CD has adopted ESO, LBC and Reloader
+# Project 5 hand-over, once Argo CD manages ESO, LBC and Reloader (see gitops/apps/controllers.yaml):
+# install_controllers_with_terraform = false

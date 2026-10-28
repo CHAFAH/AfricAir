@@ -1,6 +1,6 @@
 # Project 1 — Answers
 
-Infrastructure for this project is in Terraform: `infra/terraform/envs/shared` (modules `hosting`
+Infrastructure for this project is in Terraform: `infra/terraform/modules/foundation`, applied from `infra/terraform/envs/staging` (modules `ec2-host`
 for the EC2 server and `static-site` for S3 + CloudFront + the deployer role). See
 [`infra/terraform/README.md`](../../infra/terraform/README.md).
 
@@ -280,7 +280,7 @@ monthly allowance are billed. `/` is included because a request for the root is 
 **Least privilege, proved.** Capture after `terraform apply`:
 
 ```bash
-eval "$(aws sts assume-role --role-arn "$(terraform -chdir=infra/terraform/envs/shared output -raw static_deployer_role_arn)" \
+eval "$(aws sts assume-role --role-arn "$(terraform -chdir=infra/terraform/envs/staging output -raw static_deployer_role_arn)" \
   --role-session-name proof --query 'Credentials.[AccessKeyId,SecretAccessKey,SessionToken]' --output text \
   | awk '{print "export AWS_ACCESS_KEY_ID="$1" AWS_SECRET_ACCESS_KEY="$2" AWS_SESSION_TOKEN="$3}')"
 aws s3 ls s3://some-other-bucket   # → An error occurred (AccessDenied) when calling the ListObjectsV2 operation
@@ -348,5 +348,5 @@ build directory (`curl https://<cf>/version.json` vs the commit you built; `aws 
 - [x] `deploy/nginx/africair.conf` (+ security-header snippet), `deploy/logrotate/africair`
 - [x] `deploy/systemd/africair-api.service`, `africair-migrate.service`, `africair-health.service|.timer`
 - [x] `deploy/iam/deployer-policy.json`, `deploy/config/api.env.example`
-- [x] Terraform for the EC2 host, S3, CloudFront and the deployer role (`infra/terraform/envs/shared`)
+- [x] Terraform for the EC2 host, S3, CloudFront and the deployer role (`infra/terraform/modules/foundation`)
 - [ ] Screenshots from the real EC2/CloudFront deployment and the 5-minute demo recording

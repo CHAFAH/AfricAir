@@ -1,42 +1,28 @@
-# Account-level and non-Kubernetes resources for Projects 1-3:
+# Account-level and non-Kubernetes resources for Projects 1-3, called from envs/staging so that one
+# `terraform apply` creates everything:
 #   Project 1  EC2 web server (nginx + systemd), S3 + CloudFront static site, least-privilege deployer
 #   Project 2  ECR repositories
 #   Project 3  OIDC providers and CI roles, the deploy bucket, EC2 container hosts for staging/production
-# plus a $10 AWS Budget alert. Apply this before envs/staging (which reads the ECR repositories).
+# plus a monthly AWS Budget alert.
 
 terraform {
   required_version = "~> 1.13"
   required_providers {
     aws = { source = "hashicorp/aws", version = "~> 6.0" }
   }
-  backend "s3" {
-    key          = "africair/shared/terraform.tfstate"
-    region       = "eu-west-1"
-    encrypt      = true
-    use_lockfile = true
-  }
-}
-
-provider "aws" {
-  region = var.region
-  default_tags { tags = local.tags }
 }
 
 data "aws_caller_identity" "current" {}
 
 locals {
-  account = data.aws_caller_identity.current.account_id
-  tags = {
-    Project   = "africair"
-    Owner     = var.owner
-    ManagedBy = "terraform"
-  }
-  repo_root = "${path.root}/../../../.."
+  account   = data.aws_caller_identity.current.account_id
+  tags      = merge(var.tags, { Owner = var.owner })
+  repo_root = "${path.root}/../../../.." # the root module is infra/terraform/envs/<env>
 }
 
 # --- Project 1 ----------------------------------------------------------------------------------
 module "web_server" {
-  source    = "../../modules/ec2-host"
+  source    = "../ec2-host"
   name      = "africair-web-server"
   role      = "web-server"
   ssh_cidrs = var.ssh_cidrs
@@ -44,7 +30,7 @@ module "web_server" {
 }
 
 module "static_site" {
-  source                          = "../../modules/static-site"
+  source                          = "../static-site"
   name                            = "africair"
   bucket_name                     = "africair-site-${local.account}"
   deployer_policy_template        = "${local.repo_root}/deploy/iam/deployer-policy.json"
@@ -54,7 +40,7 @@ module "static_site" {
 
 # --- Project 2 ----------------------------------------------------------------------------------
 module "ecr" {
-  source = "../../modules/ecr"
+  source = "../ecr"
   tags   = local.tags
 }
 
@@ -62,6 +48,7 @@ module "ecr" {
 resource "aws_s3_bucket" "deploy" {
   bucket        = "africair-deploy-${local.account}" # scripts/ci/deploy-ec2.sh default
   force_destroy = true
+  tags          = local.tags
 }
 
 resource "aws_s3_bucket_public_access_block" "deploy" {
@@ -98,7 +85,7 @@ resource "aws_s3_bucket_lifecycle_configuration" "deploy" {
 }
 
 module "ci_oidc" {
-  source              = "../../modules/ci-oidc"
+  source              = "../ci-oidc"
   github_repository   = var.github_repository
   circleci_org_id     = var.circleci_org_id
   circleci_project_id = var.circleci_project_id
@@ -137,7 +124,7 @@ data "aws_iam_policy_document" "host" {
 }
 
 module "container_host" {
-  source            = "../../modules/ec2-host"
+  source            = "../ec2-host"
   for_each          = toset(["staging", "production"])
   name              = "africair-${each.value}-host"
   role              = "container-host"

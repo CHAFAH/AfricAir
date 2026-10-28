@@ -2,7 +2,7 @@
 
 How-to: [`docs/docker.md`](../../docs/docker.md). ECR repositories (scan on push, immutable tags,
 lifecycle: keep 10 tagged, expire untagged after 1 day) are created by Terraform in
-`infra/terraform/envs/shared`.
+`infra/terraform/modules/foundation` (applied with everything else from `infra/terraform/envs/staging`).
 
 > **Evidence status.** Everything below was run locally on Docker 28.5 (Docker Desktop, arm64,
 > containerd image store). Not done here, because it needs your accounts: the Docker Hub and ECR

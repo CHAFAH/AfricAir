@@ -4,7 +4,6 @@ gitops:
   enabled: true
 
 image:
-  registry: 123456789012.dkr.ecr.eu-west-1.amazonaws.com
   tag: v1.0.0          # ECR tag on the same digest CI built on main (release.yml promote job)
 
 web:
@@ -23,17 +22,14 @@ api:
 
 secrets:
   appSecretName: africair/production/app   # a different Secrets Manager secret
-  # Bootcamp trade-off: production shares the staging RDS instance and database. A real production gets
-  # its own RDS (an envs/production Terraform root) and its own discovery parameters.
-  dbMasterSecretArn: arn:aws:secretsmanager:eu-west-1:123456789012:secret:rds!db-00000000-0000-0000-0000-000000000000-AbCdEf
-  dbParameterPrefix: /africair/staging/db
+  # Bootcamp trade-off: production shares the staging RDS instance and database (cluster.yaml). A real
+  # production gets its own RDS and discovery parameters.
 
 ingress:
   # Without a domain, two host-less Ingresses in one ALB group would collide on "/": production gets its
   # own ALB. With a domain, use group "africair" and host www.<domain>.
   groupName: africair-production
   host: ""
-  certificateArn: ""
 
 autoscaling:
   minReplicas: 2

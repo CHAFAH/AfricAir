@@ -34,3 +34,15 @@ output "ci_role_arns" {
 output "container_hosts" {
   value = { for env, h in module.container_host : env => "http://${h.public_dns}" }
 }
+
+output "account_id" {
+  value = local.account
+}
+
+output "ecr_repository_arns" {
+  value = module.ecr.repository_arns
+}
+
+output "github_ci_role_arn" {
+  value = module.ci_oidc.role_arns["github-ci"]
+}
