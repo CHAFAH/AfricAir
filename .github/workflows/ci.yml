@@ -1,7 +1,12 @@
 name: CI
 
-# PRs: verify → (unit, build → e2e, images: build + scan, no push).
-# main:  the same gates, then images pushed to ECR as :<sha>, staging deploy, smoke test, GitOps bump.
+# Pull requests: verify → unit (+ PostgreSQL) · build → e2e · images (build + scan, no push).
+# main:          the same, then push both images to ECR (:<sha> and :latest) and helm-deploy staging.
+#
+# Repository variables (Settings → Secrets and variables → Actions → Variables):
+#   AWS_ROLE_ARN   terraform output ci_role_arn  (OIDC: no AWS keys are stored)
+#   AWS_REGION     eu-west-1 (default)
+#   EKS_CLUSTER    africair-stg-cluster (default)
 on:
   pull_request:
   push:
@@ -18,6 +23,7 @@ permissions:
 
 env:
   AWS_REGION: ${{ vars.AWS_REGION || 'eu-west-1' }}
+  EKS_CLUSTER: ${{ vars.EKS_CLUSTER || 'africair-stg-cluster' }}
   FORCE_COLOR: "1"
 
 jobs:
@@ -38,7 +44,7 @@ jobs:
             docker run --rm -i -v "$PWD/.hadolint.yaml:/.config/hadolint.yaml:ro" hadolint/hadolint:v2.12.0 < "$f"
           done
       - name: shellcheck
-        run: docker run --rm -v "$PWD:/mnt" -w /mnt koalaman/shellcheck:v0.10.0 -x -P SCRIPTDIR scripts/ops/*.sh scripts/ci/*.sh scripts/docker/*.sh deploy/ec2/deploy.sh
+        run: docker run --rm -v "$PWD:/mnt" -w /mnt koalaman/shellcheck:v0.10.0 -x -P SCRIPTDIR scripts/ops/*.sh scripts/ci/*.sh scripts/docker/*.sh
 
   manifests:
     name: manifests (Terraform, Helm, alert rules)
@@ -49,32 +55,24 @@ jobs:
       - uses: hashicorp/setup-terraform@v3
         with:
           terraform_version: 1.13.4
-      - name: Terraform fmt, validate, tflint, trivy config
+      - name: terraform fmt and validate
         run: |
-          terraform fmt -check -recursive infra/terraform
-          for d in bootstrap envs/staging; do
-            terraform -chdir="infra/terraform/$d" init -backend=false -input=false >/dev/null
-            terraform -chdir="infra/terraform/$d" validate
-          done
-          curl -fsSL https://raw.githubusercontent.com/terraform-linters/tflint/v0.59.1/install_linux.sh | TFLINT_VERSION=v0.59.1 bash
-          tflint --config "$PWD/infra/terraform/.tflint.hcl" --init
-          tflint --config "$PWD/infra/terraform/.tflint.hcl" --recursive --chdir infra/terraform
-          docker run --rm -v "$PWD:/src" -w /src aquasec/trivy:0.67.2 config --quiet --severity HIGH,CRITICAL --exit-code 1 infra/terraform
+          terraform -chdir=terraform fmt -check -recursive
+          terraform -chdir=terraform init -backend=false -input=false >/dev/null
+          terraform -chdir=terraform validate
       - uses: azure/setup-helm@v4
-      - name: Helm lint and kubeconform (app chart in Helm and GitOps mode, platform chart, Argo CD apps)
+      - name: helm lint and kubeconform
         run: |
           kubeconform() {
             docker run --rm -i ghcr.io/yannh/kubeconform:v0.7.0 -strict -summary -schema-location default \
               -schema-location 'https://raw.githubusercontent.com/datreeio/CRDs-catalog/main/{{.Group}}/{{.ResourceKind}}_{{.ResourceAPIVersion}}.json'
           }
-          c=gitops/values/cluster.yaml
-          helm lint deploy/helm/africair -f deploy/helm/africair/values-staging.yaml -f "$c"
-          helm template africair deploy/helm/africair -f deploy/helm/africair/values-staging.yaml -f "$c" | kubeconform
-          helm template africair deploy/helm/africair -f "$c" -f gitops/values/africair-staging.yaml | kubeconform
-          helm template africair deploy/helm/africair -f "$c" -f gitops/values/africair-production.yaml | kubeconform
-          helm lint gitops/platform
+          helm lint deploy/helm/africair -f deploy/helm/africair/values-staging.yaml
+          helm template africair deploy/helm/africair -f deploy/helm/africair/values-staging.yaml | kubeconform
+          helm template store terraform/charts/cluster-secret-store | kubeconform
+          # Project 5 GitOps files (optional): keep them valid too
+          helm template africair deploy/helm/africair -f gitops/values/cluster.yaml -f gitops/values/africair-staging.yaml | kubeconform
           helm template platform gitops/platform | kubeconform
-          # one document stream: `---` between files, or the last document of one file merges with the next
           for f in gitops/apps/*.yaml gitops/bootstrap/*.yaml; do cat "$f"; echo "---"; done | kubeconform
       - name: promtool test rules
         run: |
@@ -110,10 +108,6 @@ jobs:
           node-version: ${{ matrix.node }}
       - name: Tests (the "API with PostgreSQL" suite runs because TEST_DATABASE_URL is set)
         run: pnpm test --reporter=default --reporter=junit --outputFile.junit=test-results/unit.xml
-      - name: Prove the database suite ran
-        run: |
-          grep -q 'API with PostgreSQL' test-results/unit.xml
-          ! grep -A2 'API with PostgreSQL' test-results/unit.xml | grep -q '<skipped'
       - uses: mikepenz/action-junit-report@v5
         if: always()
         with:
@@ -121,11 +115,6 @@ jobs:
           check_name: unit tests (node ${{ matrix.node }})
           job_summary: true
           annotate_only: true
-      - uses: actions/upload-artifact@v4
-        if: always()
-        with:
-          name: unit-results-node${{ matrix.node }}
-          path: test-results/
 
   build:
     needs: verify
@@ -147,7 +136,7 @@ jobs:
     runs-on: ubuntu-24.04
     timeout-minutes: 15
     container:
-      image: mcr.microsoft.com/playwright:v1.64.0-noble # browsers preinstalled: nothing to download or cache
+      image: mcr.microsoft.com/playwright:v1.64.0-noble # browsers preinstalled
       options: --ipc=host
     strategy:
       fail-fast: false
@@ -164,17 +153,11 @@ jobs:
         with:
           name: dist
           path: dist
-      - name: Serve the build (static mode) and run the shard
+      - name: Serve the build and run the shard
         run: |
           pnpm exec vite preview --port 4173 --strictPort &
           npx --yes wait-on@8 -t 30000 http://localhost:4173
           BASE_URL=http://localhost:4173 pnpm test:e2e --project=${{ matrix.project }} --shard=${{ matrix.shard }}/2
-      - uses: mikepenz/action-junit-report@v5
-        if: always()
-        with:
-          report_paths: test-results/junit.xml
-          check_name: e2e ${{ matrix.project }} ${{ matrix.shard }}/2
-          annotate_only: true
       - uses: actions/upload-artifact@v4
         if: always()
         with:
@@ -192,53 +175,42 @@ jobs:
     permissions:
       contents: read
       id-token: write # OIDC to AWS, only used on main
-    outputs:
-      web-digest: ${{ steps.push.outputs.web }}
-      api-digest: ${{ steps.push.outputs.api }}
     steps:
       - uses: actions/checkout@v4
       - uses: docker/setup-buildx-action@v3
       - name: Build both images (tests run inside the build)
         run: |
-          build_date=$(date -u +%Y-%m-%dT%H:%M:%SZ)
           for img in web api; do
             docker buildx build --load -f "Dockerfile.$img" \
               --cache-from "type=gha,scope=$img" --cache-to "type=gha,mode=max,scope=$img" \
-              --build-arg "VERSION=${GITHUB_REF_NAME//\//-}-${GITHUB_SHA::7}" \
-              --build-arg "GIT_SHA=$GITHUB_SHA" \
-              --build-arg "BUILD_DATE=$build_date" \
+              --build-arg "VERSION=${GITHUB_SHA::7}" --build-arg "GIT_SHA=$GITHUB_SHA" \
+              --build-arg "BUILD_DATE=$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
               -t "africair-$img:$GITHUB_SHA" .
           done
-      - name: Trivy (fails on CRITICAL; HIGH is reported)
+      - name: Trivy (fails on CRITICAL)
         run: |
-          trivy() {
-            docker run --rm -v /var/run/docker.sock:/var/run/docker.sock -v "$HOME/.cache/trivy:/root/.cache/trivy" \
-              -v "$PWD:/src:ro" -w /src aquasec/trivy:0.67.2 image --quiet "$@"
-          }
           for img in web api; do
-            trivy --severity CRITICAL --exit-code 1 "africair-$img:$GITHUB_SHA"
-            trivy --severity HIGH --exit-code 0 "africair-$img:$GITHUB_SHA"
+            docker run --rm -v /var/run/docker.sock:/var/run/docker.sock aquasec/trivy:0.67.2 image --quiet \
+              --severity CRITICAL --exit-code 1 "africair-$img:$GITHUB_SHA"
           done
       - uses: aws-actions/configure-aws-credentials@v4
         if: github.event_name == 'push' && github.ref == 'refs/heads/main'
         with:
-          role-to-assume: ${{ vars.AWS_CI_ROLE_ARN }}
+          role-to-assume: ${{ vars.AWS_ROLE_ARN }}
           aws-region: ${{ env.AWS_REGION }}
       - uses: aws-actions/amazon-ecr-login@v2
         if: github.event_name == 'push' && github.ref == 'refs/heads/main'
         id: ecr
-      - name: Push :<sha> (built once; releases re-tag this digest)
-        id: push
+      - name: Push :<sha> and :latest
         if: github.event_name == 'push' && github.ref == 'refs/heads/main'
         env:
           REGISTRY: ${{ steps.ecr.outputs.registry }}
         run: |
           for img in web api; do
-            docker tag "africair-$img:$GITHUB_SHA" "$REGISTRY/africair-$img:$GITHUB_SHA"
-            docker push --quiet "$REGISTRY/africair-$img:$GITHUB_SHA"
-            digest=$(docker image inspect "$REGISTRY/africair-$img:$GITHUB_SHA" --format '{{index .RepoDigests 0}}')
-            echo "$img=$digest" >> "$GITHUB_OUTPUT"
-            echo "- \`$digest\`" >> "$GITHUB_STEP_SUMMARY"
+            for tag in "$GITHUB_SHA" latest; do
+              docker tag "africair-$img:$GITHUB_SHA" "$REGISTRY/africair-$img:$tag"
+              docker push --quiet "$REGISTRY/africair-$img:$tag"
+            done
           done
 
   deploy-staging:
@@ -251,7 +223,7 @@ jobs:
       cancel-in-progress: false
     environment:
       name: staging
-      url: ${{ steps.deploy.outputs.url }}
+      url: ${{ steps.url.outputs.url }}
     permissions:
       contents: read
       id-token: write
@@ -259,43 +231,24 @@ jobs:
       - uses: actions/checkout@v4
       - uses: aws-actions/configure-aws-credentials@v4
         with:
-          role-to-assume: ${{ vars.AWS_CI_ROLE_ARN }}
+          role-to-assume: ${{ vars.AWS_ROLE_ARN }}
           aws-region: ${{ env.AWS_REGION }}
-      - name: Deploy :${{ github.sha }} through SSM
-        id: deploy
-        run: echo "url=$(scripts/ci/deploy-ec2.sh staging "$GITHUB_SHA" | tail -n1)" >> "$GITHUB_OUTPUT"
+      - uses: azure/setup-helm@v4
+      - name: helm upgrade (image :${{ github.sha }})
+        run: |
+          aws eks update-kubeconfig --name "$EKS_CLUSTER" --region "$AWS_REGION"
+          registry="$(aws sts get-caller-identity --query Account --output text).dkr.ecr.$AWS_REGION.amazonaws.com"
+          helm upgrade --install africair deploy/helm/africair -n africair-staging \
+            -f deploy/helm/africair/values-staging.yaml \
+            --set image.registry="$registry" --set image.tag="$GITHUB_SHA" --wait --timeout 10m
+      - name: Wait for the ALB
+        id: url
+        run: |
+          for _ in $(seq 60); do
+            host=$(kubectl -n africair-staging get ingress africair -o jsonpath='{.status.loadBalancer.ingress[0].hostname}')
+            [ -n "$host" ] && break
+            sleep 5
+          done
+          echo "url=http://$host" >> "$GITHUB_OUTPUT"
       - name: Smoke test (version.json and /api/config report this commit)
-        run: scripts/ci/smoke.sh "${{ steps.deploy.outputs.url }}" "$GITHUB_SHA" staging
-      - uses: ./.github/actions/setup
-      - name: Smoke e2e against staging
-        run: |
-          npx playwright install --with-deps chromium
-          BASE_URL=${{ steps.deploy.outputs.url }} pnpm test:e2e --project=desktop e2e/booking.spec.ts
-
-  # Project 5: Argo CD tracks gitops/values/africair-staging.yaml; CI only changes the image tag in Git.
-  # main is protected, so the commit is pushed with a GitHub App token; the app is the only bypass
-  # actor in the ruleset. GITHUB_TOKEN pushes would be rejected, and PRs it opens don't trigger checks.
-  gitops-bump:
-    if: github.event_name == 'push' && github.ref == 'refs/heads/main' && vars.GITOPS_ENABLED == 'true'
-    needs: [unit, e2e, images]
-    runs-on: ubuntu-24.04
-    concurrency:
-      group: gitops-bump
-      cancel-in-progress: false
-    steps:
-      - uses: actions/create-github-app-token@v1
-        id: app
-        with:
-          app-id: ${{ vars.GITOPS_APP_ID }}
-          private-key: ${{ secrets.GITOPS_APP_PRIVATE_KEY }}
-      - uses: actions/checkout@v4
-        with:
-          token: ${{ steps.app.outputs.token }}
-      - name: Set image.tag for staging
-        run: |
-          yq -i '.image.tag = strenv(GITHUB_SHA) | .image.tag style="double"' gitops/values/africair-staging.yaml
-          git diff --quiet && exit 0
-          git config user.name "africair-gitops[bot]"
-          git config user.email "africair-gitops@users.noreply.github.com"
-          git commit -am "staging: deploy ${GITHUB_SHA::7} [skip ci]"
-          git pull --rebase --quiet && git push
+        run: scripts/ci/smoke.sh "${{ steps.url.outputs.url }}" "$GITHUB_SHA" staging

@@ -2,27 +2,16 @@
   "Version": "2012-10-17",
   "Statement": [
     {
-      "Sid": "CircleCiStagingRole",
+      "Sid": "CircleCiMainBranchOnly",
       "Effect": "Allow",
-      "Principal": {
-        "Federated": "arn:aws:iam::${account_id}:oidc-provider/oidc.circleci.com/org/${circleci_org_id}"
-      },
+      "Principal": { "Federated": "arn:aws:iam::${account_id}:oidc-provider/oidc.circleci.com/org/${circleci_org_id}" },
       "Action": "sts:AssumeRoleWithWebIdentity",
       "Condition": {
-        "StringEquals": {
-          "oidc.circleci.com/org/${circleci_org_id}:aud": "${circleci_org_id}"
-        },
+        "StringEquals": { "oidc.circleci.com/org/${circleci_org_id}:aud": "${circleci_org_id}" },
         "StringLike": {
-          "oidc.circleci.com/org/${circleci_org_id}:sub": [
-            "org/${circleci_org_id}/project/${circleci_project_id}/user/*/vcs-origin/github.com/${github_repo}/vcs-ref/refs/heads/main",
-            "org/${circleci_org_id}/project/${circleci_project_id}/user/*/vcs-origin/github.com/${github_repo}/vcs-ref/refs/tags/v*"
-          ]
+          "oidc.circleci.com/org/${circleci_org_id}:sub": "org/${circleci_org_id}/project/${circleci_project_id}/user/*/vcs-origin/*/vcs-ref/refs/heads/main"
         }
       }
     }
-  ],
-  "_production_role": {
-    "_comment": "africair-circleci-production: same principal and aud, and sub limited to tags. The CircleCI context 'africair-production' that holds its ARN is restricted to a security group, and the job runs only after the approval job 'hold'.",
-    "oidc.circleci.com/org/${circleci_org_id}:sub": "org/${circleci_org_id}/project/${circleci_project_id}/user/*/vcs-origin/github.com/${github_repo}/vcs-ref/refs/tags/v*"
-  }
+  ]
 }

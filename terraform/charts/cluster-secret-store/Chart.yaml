@@ -1,0 +1,5 @@
+apiVersion: v2
+name: cluster-secret-store
+description: ClusterSecretStore for AWS Secrets Manager (installed by Terraform after External Secrets Operator)
+type: application
+version: 1.0.0

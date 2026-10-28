@@ -4,7 +4,7 @@ gitops:
   enabled: true
 
 image:
-  tag: v1.0.0          # ECR tag on the same digest CI built on main (release.yml promote job)
+  tag: v1.0            # an image tag pushed to ECR
 
 web:
   env:

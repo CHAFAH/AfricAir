@@ -48,13 +48,11 @@ autoscaling:
   targetCPUUtilizationPercentage: 60
 
 secrets:
-  # ClusterSecretStores (deploy/k8s/cluster-secret-stores.yaml, or gitops/platform in Project 5)
+  # ClusterSecretStore created by Terraform (terraform/charts/cluster-secret-store)
   secretsManagerStore: aws-secrets-manager
-  parameterStore: aws-parameter-store
   appSecretName: africair/local/app           # {"ADMIN_TOKEN": "...", "PROMO_CODES": "..."}
   appRefreshInterval: 1m
-  dbMasterSecretArn: ""                       # RDS-managed secret (full ARN incl. -xxxxxx)
-  dbParameterPrefix: /africair/local/db       # host, port, name
+  dbSecretName: africair/local/db             # {"DATABASE_URL": "postgresql://..."}
   dbRefreshInterval: 1h
   mountPath: /var/run/secrets/africair
 
@@ -69,7 +67,7 @@ ingress:
 networkPolicy:
   enabled: true
   albSourceCidrs: ["10.40.0.0/16"]           # target-type: ip → traffic arrives from ALB ENIs in the VPC
-  databaseCidrs: ["10.40.100.0/24", "10.40.101.0/24", "10.40.102.0/24"]
+  databaseCidrs: ["10.40.100.0/24", "10.40.101.0/24"] # terraform/vpc.tf private (RDS) subnets
   monitoringNamespace: monitoring
 
 migrations:

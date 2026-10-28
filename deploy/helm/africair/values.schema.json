@@ -33,10 +33,7 @@
     },
     "secrets": {
       "type": "object",
-      "required": ["appSecretName", "dbParameterPrefix"],
-      "properties": {
-        "dbMasterSecretArn": { "type": "string", "pattern": "^$|^arn:aws[a-z-]*:secretsmanager:[a-z0-9-]+:[0-9]{12}:secret:.+-[A-Za-z0-9]{6}$" }
-      }
+      "required": ["appSecretName", "dbSecretName"]
     },
     "ingress": {
       "type": "object",

@@ -1,41 +1,7 @@
-# AfricAir runbook (EKS staging and production)
+# AfricAir runbook (EKS staging)
 
-`NS` = `africair-staging` or `africair-production`. Get cluster access with
-`$(terraform -chdir=infra/terraform/envs/staging output -raw kubeconfig_command)`.
-
-## First deploy
-
-```bash
-make -C . tf-plan tf-apply                         # VPC, EKS, RDS, then platform (2 phases on the first run)
-aws secretsmanager put-secret-value --secret-id africair/staging/app --secret-string \
-  "{\"ADMIN_TOKEN\":\"$(openssl rand -hex 24)\",\"PROMO_CODES\":\"SAVE10:10,AFRICA20:20\"}"
-make cluster-secret-stores                         # Project 4 only; Argo CD owns them in Project 5
-cp deploy/helm/africair/values-staging.yaml deploy/helm/africair/values-staging.local.yaml   # fill ARNs, registry
-make helm-install TAG=<git-sha-in-ECR>
-```
-
-Project 5 (GitOps): `enable_argocd = true`, `enable_platform_node_group = true` and
-`enable_production_namespace = true` in `terraform.tfvars`, then `make tf-apply`. Write the platform
-secrets (below), fill the cluster-specific values in `gitops/values/*.yaml`, commit, and run
-`kubectl apply -n argocd -f gitops/bootstrap/root-app.yaml`. Then hand the controllers over (see
-`gitops/apps/controllers.yaml`).
-
-### Platform secrets (Project 5)
-
-```bash
-pw=$(openssl rand -base64 18)                       # give it to the team through your password manager
-hash=$(htpasswd -nbBC 10 "" "$pw" | tr -d ':\n' | sed 's/$2y/$2a/')
-aws secretsmanager put-secret-value --secret-id africair/platform/argocd --secret-string \
-  "{\"adminPasswordBcrypt\":\"$hash\",\"adminPasswordMtime\":\"$(date -u +%FT%TZ)\",\"slackToken\":\"xoxb-...\"}"
-aws secretsmanager put-secret-value --secret-id africair/platform/grafana --secret-string \
-  "{\"adminUser\":\"admin\",\"adminPassword\":\"$(openssl rand -base64 18)\"}"
-aws secretsmanager put-secret-value --secret-id africair/platform/alertmanager --secret-string \
-  '{"slackWebhookUrl":"https://hooks.slack.com/services/...","pageWebhookUrl":"https://hooks.slack.com/services/...","deadmansSwitchUrl":"https://hc-ping.com/<uuid>"}'
-kubectl -n argocd delete secret argocd-initial-admin-secret --ignore-not-found   # no bootstrap password left behind
-```
-
-Without a domain: `kubectl -n argocd port-forward svc/argocd-server 8080:80` and
-`kubectl -n monitoring port-forward svc/monitoring-grafana 3000:80`.
+`NS=africair-staging`. Deploying from scratch is in the [README](../README.md#deploy-to-aws-staging).
+Get cluster access with `aws eks update-kubeconfig --name africair-stg-cluster --region eu-west-1`.
 
 ## Roll back
 
@@ -50,8 +16,8 @@ Without a domain: `kubectl -n argocd port-forward svc/argocd-server 8080:80` and
 
 | Secret | How | Propagation |
 |---|---|---|
-| `ADMIN_TOKEN`, `PROMO_CODES` | `aws secretsmanager put-secret-value --secret-id africair/<env>/app ...` | ESO refresh (≤ 1 min) → kubelet updates the mounted file (≤ ~1 min, its sync period plus cache TTL) → app re-reads (`SECRET_REFRESH_SECONDS` = 15 s). **No restart.** Check: the fingerprint on `/#/status`. |
-| RDS master password | `aws secretsmanager rotate-secret --secret-id <rds-secret-arn>` | ESO refresh (`dbRefreshInterval` 1 h; force it with `kubectl annotate externalsecret africair-db force-sync=$(date +%s) --overwrite`) → Secret updated → **Reloader restarts the API** (env var). Without Reloader: `kubectl rollout restart deploy/africair-api`. |
+| `ADMIN_TOKEN`, `PROMO_CODES` | `terraform apply -var-file=stg.tfvars -replace=random_password.admin_token` (or change `promo_codes`) | ESO refresh (≤ 1 min) → kubelet updates the mounted file (≤ ~1 min, its sync period plus cache TTL) → app re-reads (`SECRET_REFRESH_SECONDS` = 15 s). **No restart.** Check: the fingerprint on `/#/status`. |
+| Database password | `terraform apply -var-file=stg.tfvars -replace=random_password.db` (updates RDS and `africair/stg/db`) | ESO refresh (`dbRefreshInterval` 1 h; force it with `kubectl annotate externalsecret africair-db force-sync=$(date +%s) --overwrite`) → Secret updated → then `kubectl rollout restart deploy/africair-api -n africair-staging` (env var: only a restart picks it up). |
 | Argo CD admin password | New bcrypt hash + new `adminPasswordMtime` in `africair/platform/argocd` | ESO (5 min) merges it into `argocd-secret`; existing sessions are invalidated. |
 | Grafana / Alertmanager | Update `africair/platform/{grafana,alertmanager}` | Alertmanager: the operator reloads the config. Grafana: restart (`kubectl -n monitoring rollout restart deploy/monitoring-grafana`). |
 
@@ -72,7 +38,7 @@ Restore into a fresh database (`createdb africair_restore`) first and switch onl
 ## Scale
 
 - App: the HPA scales 2–6 replicas at 60% CPU. For a known peak raise `autoscaling.minReplicas` in values (Git).
-- Nodes: `general` is 2–4 nodes (Terraform `node_groups`); the HPA can only use what the nodes have.
+- Nodes: 2 × t3.medium (`node_count` in `terraform/stg.tfvars`); the HPA can only use what the nodes have.
 
 ## Troubleshooting drills
 
@@ -85,7 +51,7 @@ Restore into a fresh database (`createdb africair_restore`) first and switch onl
 | 5 | Migration hook times out | `kubectl -n $NS logs job/africair-migrate` | RDS SG doesn't allow the cluster SG; `DB_SSL=disable` while `rds.force_ssl=1` ("no pg_hba.conf entry … no encryption"); or `africair-db` not synced yet (backoff retries). |
 | 6 | `/api/readyz` 503 on every pod, `healthz` 200 | `curl …/api/config \| jq .secrets.database` | The RDS password was rotated and pods still have the old env var → Reloader (or `rollout restart`). |
 | 7 | HPA `<unknown>/60%` | `kubectl get apiservice v1beta1.metrics.k8s.io`, `kubectl top pods` | metrics-server add-on missing, or the container has no CPU **request**. |
-| 8 | `terraform destroy` → `DependencyViolation` | `aws elbv2 describe-load-balancers`, `aws ec2 describe-network-interfaces --filters Name=vpc-id,Values=…` | The controller-created ALB and its SGs/ENIs still exist. Use `make destroy`: it deletes Ingresses and PVCs, waits for the ALB to disappear, then runs Terraform. |
+| 8 | `terraform destroy` → `DependencyViolation` | `aws elbv2 describe-load-balancers`, `aws ec2 describe-network-interfaces --filters Name=vpc-id,Values=…` | The controller-created ALB and its SGs/ENIs still exist. `helm uninstall africair -n africair-staging`, wait until `kubectl get ingress -A` is empty, then `terraform destroy -var-file=stg.tfvars` again. |
 
 ## Alerts
 

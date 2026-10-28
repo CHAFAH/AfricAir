@@ -2,7 +2,7 @@
 
 Both platforms run the same pipeline: `.github/workflows/{ci,release,refresh-airports}.yml` and
 `.circleci/config.yml`. Both use the same scripts (`scripts/ci/*.sh`) and AWS roles
-(`infra/terraform/modules/ci-oidc`).
+(`terraform/ci.tf`: one OIDC role, main branch only).
 
 | | GitHub Actions | CircleCI |
 |---|---|---|

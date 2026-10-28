@@ -21,15 +21,14 @@ api:
     DB_SSL: require
 
 secrets:
-  appSecretName: africair/staging/app
+  appSecretName: africair/stg/app
 
 ingress:
   groupName: africair
   host: ""            # staging.<domain>
 
 backup:
-  enabled: true
-  prefix: africair/staging
+  enabled: false   # no backup bucket in the simplified staging infrastructure
 
 metrics:
   serviceMonitor:

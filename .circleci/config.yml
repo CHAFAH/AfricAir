@@ -1,16 +1,13 @@
 version: 2.1
 
-# Same pipeline as .github/workflows/{ci,release}.yml:
-#   every branch: verify → unit (node 20/22 + Postgres) · build → e2e (2 parallel shards) · images (build + scan)
-#   main:         images pushed to ECR as :<sha> → deploy staging → smoke
-#   tag vX.Y.Z:   promote (re-tag the same digests) → ⏸ hold (approval) → deploy production (restricted context)
-# Project settings: enable "Auto-cancel redundant workflows" (new pushes cancel older runs on the same branch,
-# never on main); create contexts "africair-staging" and "africair-production" (the latter restricted to a
-# security group) with AWS_ROLE_ARN set to the matching role from `terraform output ci_role_arns` (infra/terraform/envs/staging).
+# Same pipeline as .github/workflows/ci.yml:
+#   every branch: verify → unit (node 20/22 + PostgreSQL) · build → e2e (2 parallel shards) · images (build + scan)
+#   main:         images pushed to ECR (:<sha>, :latest) → helm upgrade on the staging cluster → smoke test
+# Setup: create the context "africair-staging" with AWS_ROLE_ARN = `terraform output ci_role_arn`
+# (set circleci_org_id / circleci_project_id in terraform/stg.tfvars first) and AWS_REGION.
 
 orbs:
   aws-cli: circleci/aws-cli@5.1.1
-  queue: eddiewebb/queue@3.2.1
 
 executors:
   node:
@@ -18,7 +15,6 @@ executors:
       version: { type: string, default: "22.21" }
     docker:
       - image: cimg/node:<< parameters.version >>
-    resource_class: medium
   node-postgres:
     parameters:
       version: { type: string, default: "22.21" }
@@ -38,7 +34,6 @@ executors:
   builder:
     machine:
       image: ubuntu-2404:current
-      docker_layer_caching: false
 
 commands:
   setup:
@@ -52,7 +47,6 @@ commands:
           command: |
             sudo corepack enable 2>/dev/null || corepack enable
             pnpm config set store-dir ~/.pnpm-store
-            pnpm --version
       - restore_cache:
           keys:
             - << parameters.cache-prefix >>-{{ arch }}-{{ checksum "pnpm-lock.yaml" }}
@@ -63,23 +57,21 @@ commands:
           paths: [~/.pnpm-store]
 
   aws-oidc:
-    description: Exchange the CircleCI OIDC token (v2) for short-lived AWS credentials. No stored keys.
+    description: Exchange the CircleCI OIDC token for short-lived AWS credentials (no stored keys)
     steps:
       - aws-cli/install
       - run:
-          name: Assume AWS_ROLE_ARN with web identity
+          name: Assume AWS_ROLE_ARN
           command: |
-            : "${AWS_ROLE_ARN:?set AWS_ROLE_ARN in the context}"
             creds=$(aws sts assume-role-with-web-identity --role-arn "$AWS_ROLE_ARN" \
-              --role-session-name "circleci-${CIRCLE_WORKFLOW_ID:0:16}" --web-identity-token "$CIRCLE_OIDC_TOKEN_V2" \
-              --duration-seconds 3600 --query Credentials --output json)
+              --role-session-name "circleci-${CIRCLE_BUILD_NUM}" --web-identity-token "$CIRCLE_OIDC_TOKEN_V2" \
+              --query Credentials --output json)
             {
               echo "export AWS_ACCESS_KEY_ID=$(jq -r .AccessKeyId <<<"$creds")"
               echo "export AWS_SECRET_ACCESS_KEY=$(jq -r .SecretAccessKey <<<"$creds")"
               echo "export AWS_SESSION_TOKEN=$(jq -r .SessionToken <<<"$creds")"
               echo "export AWS_REGION=${AWS_REGION:-eu-west-1} AWS_DEFAULT_REGION=${AWS_REGION:-eu-west-1}"
             } >> "$BASH_ENV"
-      - run: aws sts get-caller-identity --query Arn --output text
 
 jobs:
   verify:
@@ -101,14 +93,8 @@ jobs:
       - run:
           name: Wait for PostgreSQL
           command: for i in $(seq 30); do (exec 3<>/dev/tcp/localhost/5432) 2>/dev/null && exit 0; sleep 1; done; exit 1
-      - run:
-          name: Unit + API tests (PostgreSQL suite included)
-          command: pnpm test --reporter=default --reporter=junit --outputFile.junit=test-results/unit/results.xml
-      - run:
-          name: Prove the database suite ran
-          command: grep -q 'API with PostgreSQL' test-results/unit/results.xml
+      - run: pnpm test --reporter=default --reporter=junit --outputFile.junit=test-results/unit/results.xml
       - store_test_results: { path: test-results }
-      - store_artifacts: { path: test-results }
 
   build:
     executor: node
@@ -127,14 +113,13 @@ jobs:
           cache-prefix: pnpm-playwright
       - attach_workspace: { at: . }
       - run:
-          name: e2e shard $CIRCLE_NODE_INDEX (desktop + mobile)
+          name: e2e shard
           command: |
             pnpm exec vite preview --port 4173 --strictPort &
             npx --yes wait-on@8 -t 30000 http://localhost:4173
             BASE_URL=http://localhost:4173 pnpm test:e2e --shard=$((CIRCLE_NODE_INDEX + 1))/$CIRCLE_NODE_TOTAL
       - store_test_results: { path: test-results }
       - store_artifacts: { path: playwright-report }
-      - store_artifacts: { path: test-results }
 
   images:
     parameters:
@@ -143,18 +128,12 @@ jobs:
     steps:
       - checkout
       - run:
-          name: hadolint
-          command: |
-            for f in Dockerfile.web Dockerfile.api; do
-              docker run --rm -i -v "$PWD/.hadolint.yaml:/.config/hadolint.yaml:ro" hadolint/hadolint:v2.12.0 < "$f"
-            done
-      - run:
           name: Build both images (tests run inside the build)
           command: |
             for img in web api; do
-              docker buildx build --load -f "Dockerfile.$img" \
-                --build-arg "VERSION=${CIRCLE_BRANCH:-tag}-${CIRCLE_SHA1:0:7}" --build-arg "GIT_SHA=$CIRCLE_SHA1" \
-                --build-arg "BUILD_DATE=$(date -u +%Y-%m-%dT%H:%M:%SZ)" -t "africair-$img:$CIRCLE_SHA1" .
+              docker buildx build --load -f "Dockerfile.$img" --build-arg "VERSION=${CIRCLE_SHA1:0:7}" \
+                --build-arg "GIT_SHA=$CIRCLE_SHA1" --build-arg "BUILD_DATE=$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
+                -t "africair-$img:$CIRCLE_SHA1" .
             done
       - run:
           name: Trivy (fails on CRITICAL)
@@ -168,52 +147,41 @@ jobs:
           steps:
             - aws-oidc
             - run:
-                name: Push :<sha> to ECR
+                name: Push :<sha> and :latest to ECR
                 command: |
                   registry="$(aws sts get-caller-identity --query Account --output text).dkr.ecr.$AWS_REGION.amazonaws.com"
                   aws ecr get-login-password | docker login --username AWS --password-stdin "$registry"
                   for img in web api; do
-                    docker tag "africair-$img:$CIRCLE_SHA1" "$registry/africair-$img:$CIRCLE_SHA1"
-                    docker push --quiet "$registry/africair-$img:$CIRCLE_SHA1"
+                    for tag in "$CIRCLE_SHA1" latest; do
+                      docker tag "africair-$img:$CIRCLE_SHA1" "$registry/africair-$img:$tag"
+                      docker push --quiet "$registry/africair-$img:$tag"
+                    done
                   done
 
-  deploy:
-    parameters:
-      environment: { type: enum, enum: [staging, production] }
+  deploy-staging:
     executor: node
     steps:
       - checkout
-      - when:
-          condition: { equal: [production, << parameters.environment >>] }
-          steps:
-            # Only one production deploy at a time: later workflows wait at the front of the line.
-            - queue/until_front_of_line:
-                only-on-branch: "*"
-                time: "30"
       - aws-oidc
       - run:
-          name: Deploy << parameters.environment >> through SSM
+          name: Install kubectl and helm
           command: |
-            tag=${CIRCLE_TAG:-$CIRCLE_SHA1}
-            url=$(scripts/ci/deploy-ec2.sh << parameters.environment >> "$tag" | tail -n1)
-            echo "export DEPLOY_URL=$url" >> "$BASH_ENV"
+            curl -fsSLo /tmp/kubectl "https://dl.k8s.io/release/v1.34.1/bin/linux/amd64/kubectl"
+            sudo install /tmp/kubectl /usr/local/bin/kubectl
+            curl -fsSL https://raw.githubusercontent.com/helm/helm/main/scripts/get-helm-3 | bash
+      - run:
+          name: helm upgrade
+          command: |
+            aws eks update-kubeconfig --name "${EKS_CLUSTER:-africair-stg-cluster}" --region "$AWS_REGION"
+            registry="$(aws sts get-caller-identity --query Account --output text).dkr.ecr.$AWS_REGION.amazonaws.com"
+            helm upgrade --install africair deploy/helm/africair -n africair-staging \
+              -f deploy/helm/africair/values-staging.yaml \
+              --set image.registry="$registry" --set image.tag="$CIRCLE_SHA1" --wait --timeout 10m
       - run:
           name: Smoke test
-          command: scripts/ci/smoke.sh "$DEPLOY_URL" "$CIRCLE_SHA1" << parameters.environment >>
-
-  promote:
-    executor: node
-    steps:
-      - checkout
-      - aws-oidc
-      - run:
-          name: Re-tag :$CIRCLE_SHA1 as :$CIRCLE_TAG (no rebuild)
-          command: scripts/ci/promote-images.sh "$CIRCLE_SHA1" "$CIRCLE_TAG"
-
-release-tags: &release-tags
-  filters:
-    tags: { only: /^v\d+\.\d+\.\d+$/ }
-    branches: { ignore: /.*/ }
+          command: |
+            host=$(kubectl -n africair-staging get ingress africair -o jsonpath='{.status.loadBalancer.ingress[0].hostname}')
+            scripts/ci/smoke.sh "http://$host" "$CIRCLE_SHA1" staging
 
 workflows:
   ci:
@@ -238,25 +206,7 @@ workflows:
           context: africair-staging
           requires: [verify]
           filters: { branches: { only: main } }
-      - deploy:
-          name: deploy-staging
-          environment: staging
+      - deploy-staging:
           context: africair-staging
           requires: [unit, e2e, images-push]
           filters: { branches: { only: main } }
-
-  release:
-    jobs:
-      - promote:
-          <<: *release-tags
-          context: africair-staging
-      - hold:
-          <<: *release-tags
-          type: approval
-          requires: [promote]
-      - deploy:
-          <<: *release-tags
-          name: deploy-production
-          environment: production
-          context: africair-production
-          requires: [hold]

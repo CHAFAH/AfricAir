@@ -2,61 +2,23 @@
   "Version": "2012-10-17",
   "Statement": [
     {
-      "Sid": "EcrLogin",
+      "Sid": "EcrLoginAndFindCluster",
       "Effect": "Allow",
-      "Action": "ecr:GetAuthorizationToken",
+      "Action": ["ecr:GetAuthorizationToken", "eks:DescribeCluster"],
       "Resource": "*"
     },
     {
-      "Sid": "PushAndPromoteImages",
+      "Sid": "PushImages",
       "Effect": "Allow",
       "Action": [
-        "ecr:BatchCheckLayerAvailability",
-        "ecr:BatchGetImage",
-        "ecr:CompleteLayerUpload",
-        "ecr:DescribeImages",
-        "ecr:GetDownloadUrlForLayer",
-        "ecr:InitiateLayerUpload",
-        "ecr:PutImage",
-        "ecr:UploadLayerPart"
+        "ecr:BatchCheckLayerAvailability", "ecr:BatchGetImage", "ecr:CompleteLayerUpload",
+        "ecr:GetDownloadUrlForLayer", "ecr:InitiateLayerUpload", "ecr:PutImage", "ecr:UploadLayerPart"
       ],
       "Resource": [
         "arn:aws:ecr:${region}:${account_id}:repository/africair-web",
         "arn:aws:ecr:${region}:${account_id}:repository/africair-api"
       ]
-    },
-    {
-      "Sid": "UploadDeployBundle",
-      "Effect": "Allow",
-      "Action": "s3:PutObject",
-      "Resource": "arn:aws:s3:::${deploy_bucket}/${environment}/*"
-    },
-    {
-      "Sid": "FindHost",
-      "Effect": "Allow",
-      "Action": "ec2:DescribeInstances",
-      "Resource": "*"
-    },
-    {
-      "Sid": "UseTheShellDocument",
-      "Effect": "Allow",
-      "Action": "ssm:SendCommand",
-      "Resource": "arn:aws:ssm:${region}::document/AWS-RunShellScript"
-    },
-    {
-      "Sid": "RunOnThisEnvironmentsHostOnly",
-      "Effect": "Allow",
-      "Action": "ssm:SendCommand",
-      "Resource": "arn:aws:ec2:${region}:${account_id}:instance/*",
-      "Condition": {
-        "StringEquals": { "ssm:resourceTag/Env": "${environment}" }
-      }
-    },
-    {
-      "Sid": "ReadCommandResult",
-      "Effect": "Allow",
-      "Action": "ssm:GetCommandInvocation",
-      "Resource": "*"
     }
-  ]
+  ],
+  "_kubernetes": "Kubernetes rights come from an EKS access entry: AmazonEKSEditPolicy in namespace africair-staging (terraform/ci.tf)."
 }
