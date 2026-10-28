@@ -108,7 +108,7 @@ jobs:
           node-version: ${{ matrix.node }}
       - name: Tests (the "API with PostgreSQL" suite runs because TEST_DATABASE_URL is set)
         run: pnpm test --reporter=default --reporter=junit --outputFile.junit=test-results/unit.xml
-      - uses: mikepenz/action-junit-report@v5
+      - uses: mikepenz/action-junit-report@v6
         if: always()
         with:
           report_paths: test-results/unit.xml
