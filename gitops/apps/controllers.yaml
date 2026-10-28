@@ -1,0 +1,80 @@
+# Controllers that Terraform installed in Project 4, handed over to Argo CD:
+#   1. Sync these Applications: same release names and namespaces, so Argo CD adopts the running releases.
+#   2. Forget them in Terraform WITHOUT uninstalling them:
+#        terraform state rm 'module.platform.helm_release.lbc[0]' 'module.platform.helm_release.eso[0]' \
+#                           'module.platform.helm_release.reloader[0]'
+#   3. Set install_controllers_with_terraform = false, so a later apply doesn't install them again.
+# Their IAM roles and Pod Identity associations stay in Terraform: AWS identity is infrastructure.
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: external-secrets
+  namespace: argocd
+  annotations:
+    argocd.argoproj.io/sync-wave: "-4"
+spec:
+  project: platform
+  source:
+    repoURL: https://charts.external-secrets.io
+    chart: external-secrets
+    targetRevision: 2.14.0
+    helm:
+      releaseName: external-secrets
+      valuesObject:
+        installCRDs: true
+        serviceAccount: { create: true, name: external-secrets } # matches the Pod Identity association
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: external-secrets
+  syncPolicy:
+    automated: { prune: true, selfHeal: true }
+    syncOptions: [CreateNamespace=true, ServerSideApply=true]
+---
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: aws-load-balancer-controller
+  namespace: argocd
+  annotations:
+    argocd.argoproj.io/sync-wave: "-4"
+spec:
+  project: platform
+  sources:
+    - repoURL: https://aws.github.io/eks-charts
+      chart: aws-load-balancer-controller
+      targetRevision: 3.6.2
+      helm:
+        releaseName: aws-load-balancer-controller
+        valueFiles: [$values/gitops/values/aws-load-balancer-controller.yaml]
+    - repoURL: https://github.com/CHAFAH/AfricAir.git
+      targetRevision: main
+      ref: values
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: kube-system
+  syncPolicy:
+    automated: { prune: true, selfHeal: true }
+    syncOptions: [ServerSideApply=true]
+---
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: reloader
+  namespace: argocd
+  annotations:
+    argocd.argoproj.io/sync-wave: "-4"
+spec:
+  project: platform
+  source:
+    repoURL: https://stakater.github.io/stakater-charts
+    chart: reloader
+    targetRevision: 2.2.19
+    helm:
+      releaseName: reloader
+      valuesObject:
+        reloader: { reloadOnCreate: false, watchGlobally: true }
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: kube-system
+  syncPolicy:
+    automated: { prune: true, selfHeal: true }

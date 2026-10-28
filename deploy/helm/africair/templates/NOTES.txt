@@ -1,0 +1,5 @@
+AfricAir {{ include "africair.tag" . }} in {{ .Release.Namespace }} (APP_ENV={{ .Values.api.env.APP_ENV }}).
+
+  kubectl -n {{ .Release.Namespace }} get externalsecret,deploy,po,ing,hpa,pdb,netpol
+  kubectl -n {{ .Release.Namespace }} get ingress {{ include "africair.fullname" . }} -o jsonpath='{.status.loadBalancer.ingress[0].hostname}'
+  curl -s http://<host>/api/config | jq '{appEnv, storage, secrets}'

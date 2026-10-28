@@ -6,3 +6,10 @@ playwright-report/
 .env
 .env.*
 !.env.example
+secrets/
+artifacts/
+.terraform/
+*.tfstate
+*.tfstate.*
+*.tfplan
+.pnpm-store/

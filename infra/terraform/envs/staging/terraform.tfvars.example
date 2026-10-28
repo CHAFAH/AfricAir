@@ -1,0 +1,21 @@
+# cp terraform.tfvars.example terraform.tfvars, then edit. Nothing in here is secret.
+region = "eu-west-1"
+team   = "team1"
+
+# 1.33 entered extended support 14 months after its May 2025 release. Use the newest STANDARD version:
+#   aws eks describe-cluster-versions --status STANDARD_SUPPORT --query 'clusterVersions[].clusterVersion'
+kubernetes_version = "1.35"
+
+team_cidrs           = ["203.0.113.10/32"]
+admin_principal_arns = ["arn:aws:iam::123456789012:role/africair-team1-admin"]
+ci_role_arn          = "arn:aws:iam::123456789012:role/africair-github-ci" # envs/shared output
+
+# Optional: a domain with a Route 53 hosted zone (ACM DNS validation)
+# domain_name    = "africair.example.com"
+# hosted_zone_id = "Z0123456789ABCDEFGHIJ"
+
+# Project 5
+# enable_platform_node_group         = true
+# enable_argocd                      = true
+# enable_production_namespace        = true
+# install_controllers_with_terraform = false   # after Argo CD has adopted ESO, LBC and Reloader

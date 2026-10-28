@@ -1,0 +1,70 @@
+{{- if .Values.backup.enabled }}
+# Nightly pg_dump → S3. The dump is written by an init container (postgres image) into an emptyDir and
+# uploaded by the AWS CLI with the africair-backup Pod Identity role (s3:PutObject on <bucket>/<prefix>/*).
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: {{ include "africair.fullname" . }}-backup
+  labels: {{- include "africair.labels" . | nindent 4 }}
+spec:
+  schedule: {{ .Values.backup.schedule | quote }}
+  timeZone: Etc/UTC
+  concurrencyPolicy: Forbid
+  successfulJobsHistoryLimit: 3
+  failedJobsHistoryLimit: 3
+  jobTemplate:
+    spec:
+      backoffLimit: 2
+      activeDeadlineSeconds: 1800
+      template:
+        metadata:
+          labels:
+            {{- include "africair.selector" (dict "root" . "component" "backup") | nindent 12 }}
+        spec:
+          serviceAccountName: africair-backup
+          restartPolicy: Never
+          securityContext:
+            runAsNonRoot: true
+            runAsUser: 70   # postgres in postgres:16-alpine
+            fsGroup: 70
+            seccompProfile: { type: RuntimeDefault }
+          initContainers:
+            - name: dump
+              image: {{ .Values.backup.postgresImage }}
+              command: ["sh", "-ec"]
+              args:
+                - pg_dump --no-owner --format=plain "$DATABASE_URL" | gzip -9 > /backup/africair.sql.gz && ls -l /backup
+              env:
+                - name: DATABASE_URL
+                  valueFrom:
+                    secretKeyRef: { name: {{ include "africair.fullname" . }}-db, key: DATABASE_URL }
+              securityContext: {{- include "africair.containerSecurityContext" . | nindent 16 }}
+              volumeMounts:
+                - { name: backup, mountPath: /backup }
+                - { name: tmp, mountPath: /tmp }
+              resources:
+                requests: { cpu: 50m, memory: 64Mi }
+                limits: { cpu: 500m, memory: 256Mi }
+          containers:
+            - name: upload
+              image: {{ .Values.backup.awsCliImage }}
+              command: ["sh", "-ec"]
+              args:
+                - aws s3 cp --only-show-errors /backup/africair.sql.gz "s3://$BUCKET/$PREFIX/$(date -u +%Y-%m-%dT%H%M%SZ).sql.gz"
+              env:
+                - { name: BUCKET, value: {{ required "backup.bucket is required" .Values.backup.bucket | quote }} }
+                - { name: PREFIX, value: {{ .Values.backup.prefix | quote }} }
+                - { name: HOME, value: /tmp }
+              securityContext: {{- include "africair.containerSecurityContext" . | nindent 16 }}
+              volumeMounts:
+                - { name: backup, mountPath: /backup, readOnly: true }
+                - { name: tmp, mountPath: /tmp }
+              resources:
+                requests: { cpu: 50m, memory: 64Mi }
+                limits: { cpu: 500m, memory: 256Mi }
+          volumes:
+            - name: backup
+              emptyDir: { sizeLimit: 1Gi }
+            - name: tmp
+              emptyDir: { sizeLimit: 64Mi }
+{{- end }}

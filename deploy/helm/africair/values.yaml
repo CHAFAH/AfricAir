@@ -1,0 +1,99 @@
+# Safe defaults: no AWS-specific values, no secrets. Environment files (values-staging.yaml,
+# gitops/values/africair-*.yaml) fill in registry, hosts, ARNs and settings.
+
+image:
+  registry: ""            # <account>.dkr.ecr.<region>.amazonaws.com
+  tag: ""                 # git SHA built by CI; defaults to .Chart.AppVersion
+  pullPolicy: IfNotPresent
+
+web:
+  replicas: 2
+  resources:
+    requests: { cpu: 50m, memory: 32Mi }
+    limits: { cpu: 250m, memory: 64Mi }
+  env:
+    APP_ENV: local
+
+api:
+  replicas: 2
+  # Settings only (ConfigMap → envFrom). Secrets come from ExternalSecrets below.
+  env:
+    APP_ENV: local
+    APP_VERSION: ""
+    BRAND_NAME: AfricAir
+    ANNOUNCEMENT_TEXT: ""
+    ANNOUNCEMENT_LEVEL: info
+    MAINTENANCE_MODE: "false"
+    SERVICE_FEE_USD: "15"
+    DEFAULT_LANGUAGE: ""
+    DEFAULT_CURRENCY: ""
+    FEATURE_DESTINATIONS: "true"
+    FEATURE_MY_TRIPS: "true"
+    FEATURE_PROMO_CODES: "true"
+    SUPPORT_EMAIL: support@africair.example
+    DB_SSL: require
+    SECRET_REFRESH_SECONDS: "15"
+    # On SIGTERM: fail readiness, keep serving this long while the ALB deregisters the target, then drain.
+    SHUTDOWN_DELAY_MS: "15000"
+    LOG_LEVEL: info
+  terminationGracePeriodSeconds: 45 # > SHUTDOWN_DELAY_MS (15 s) + drain (up to 10 s)
+  resources:
+    requests: { cpu: 100m, memory: 96Mi }
+    limits: { cpu: 500m, memory: 256Mi }
+
+autoscaling:
+  enabled: true
+  minReplicas: 2
+  maxReplicas: 6
+  targetCPUUtilizationPercentage: 60
+
+secrets:
+  # ClusterSecretStores (deploy/k8s/cluster-secret-stores.yaml, or gitops/platform in Project 5)
+  secretsManagerStore: aws-secrets-manager
+  parameterStore: aws-parameter-store
+  appSecretName: africair/local/app           # {"ADMIN_TOKEN": "...", "PROMO_CODES": "..."}
+  appRefreshInterval: 1m
+  dbMasterSecretArn: ""                       # RDS-managed secret (full ARN incl. -xxxxxx)
+  dbParameterPrefix: /africair/local/db       # host, port, name
+  dbRefreshInterval: 1h
+  mountPath: /var/run/secrets/africair
+
+ingress:
+  enabled: true
+  className: alb
+  groupName: africair
+  host: ""                  # staging.<domain>; empty = the ALB hostname, HTTP only
+  certificateArn: ""        # ACM certificate: enables HTTPS and the HTTP→HTTPS redirect
+  deregistrationDelaySeconds: 20  # ALB keeps in-flight requests for this long; the pod still serves them
+
+networkPolicy:
+  enabled: true
+  albSourceCidrs: ["10.40.0.0/16"]           # target-type: ip → traffic arrives from ALB ENIs in the VPC
+  databaseCidrs: ["10.40.100.0/24", "10.40.101.0/24", "10.40.102.0/24"]
+  monitoringNamespace: monitoring
+
+migrations:
+  enabled: true
+  backoffLimit: 3
+  ttlSecondsAfterFinished: 600
+
+backup:
+  enabled: false
+  schedule: "0 2 * * *"
+  bucket: ""
+  prefix: africair/local
+  postgresImage: postgres:16-alpine
+  awsCliImage: amazon/aws-cli:2.31.20
+
+metrics:
+  serviceMonitor:
+    enabled: false
+    interval: 15s
+    labels: {}
+
+podDisruptionBudget:
+  minAvailable: 1
+
+# Argo CD (Project 5): hook annotations for PreSync migrations. Helm hooks remain for `helm install`.
+gitops:
+  enabled: false

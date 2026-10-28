@@ -1,0 +1,36 @@
+# Production pins the chart to a release tag; values come from main. A promotion is one commit that moves
+# targetRevision (and image.tag in values/africair-production.yaml), followed by a MANUAL sync:
+#   argocd app sync africair-production       (refused at weekends by the AppProject sync window)
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: africair-production
+  namespace: argocd
+  annotations:
+    notifications.argoproj.io/subscribe.on-sync-failed.slack: africair-deploys
+    notifications.argoproj.io/subscribe.on-health-degraded.slack: africair-deploys
+spec:
+  project: africair
+  sources:
+    - repoURL: https://github.com/CHAFAH/AfricAir.git
+      targetRevision: v1.0.0
+      path: deploy/helm/africair
+      helm:
+        releaseName: africair
+        valueFiles: [$values/gitops/values/africair-production.yaml]
+    - repoURL: https://github.com/CHAFAH/AfricAir.git
+      targetRevision: main
+      ref: values
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: africair-production
+  syncPolicy:
+    # No `automated`: changes wait as OutOfSync until someone syncs them.
+    syncOptions: [CreateNamespace=true, ServerSideApply=true]
+    managedNamespaceMetadata:
+      labels:
+        elbv2.k8s.aws/pod-readiness-gate-inject: enabled
+  ignoreDifferences:
+    - group: apps
+      kind: Deployment
+      jsonPointers: [/spec/replicas]

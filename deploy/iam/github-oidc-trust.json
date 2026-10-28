@@ -1,0 +1,29 @@
+{
+  "Version": "2012-10-17",
+  "Statement": [
+    {
+      "Sid": "GitHubActionsCiRole",
+      "Effect": "Allow",
+      "Principal": {
+        "Federated": "arn:aws:iam::${account_id}:oidc-provider/token.actions.githubusercontent.com"
+      },
+      "Action": "sts:AssumeRoleWithWebIdentity",
+      "Condition": {
+        "StringEquals": {
+          "token.actions.githubusercontent.com:aud": "sts.amazonaws.com"
+        },
+        "StringLike": {
+          "token.actions.githubusercontent.com:sub": [
+            "repo:${github_repo}:ref:refs/heads/main",
+            "repo:${github_repo}:environment:staging",
+            "repo:${github_repo}:ref:refs/tags/v*"
+          ]
+        }
+      }
+    }
+  ],
+  "_production_role": {
+    "_comment": "The production role (africair-github-production) has the same principal and aud condition, with only this sub. The GitHub environment 'production' adds required reviewers and a deployment rule allowing tags v* only.",
+    "token.actions.githubusercontent.com:sub": "repo:${github_repo}:environment:production"
+  }
+}

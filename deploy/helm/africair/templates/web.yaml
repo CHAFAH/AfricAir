@@ -1,0 +1,72 @@
+{{- $name := printf "%s-web" (include "africair.fullname" .) }}
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ $name }}
+  labels: {{- include "africair.labels" . | nindent 4 }}
+  {{- if .Values.gitops.enabled }}
+  annotations:
+    argocd.argoproj.io/sync-wave: "1" # after the migration Job (wave 0)
+  {{- end }}
+spec:
+  {{- if not .Values.autoscaling.enabled }}
+  replicas: {{ .Values.web.replicas }}
+  {{- end }}
+  revisionHistoryLimit: 5
+  selector:
+    matchLabels: {{- include "africair.selector" (dict "root" . "component" "web") | nindent 6 }}
+  strategy:
+    rollingUpdate: { maxUnavailable: 0, maxSurge: 1 }
+  template:
+    metadata:
+      labels: {{- include "africair.selector" (dict "root" . "component" "web") | nindent 8 }}
+    spec:
+      serviceAccountName: {{ $name }}
+      automountServiceAccountToken: false
+      securityContext: {{- include "africair.podSecurityContext" . | nindent 8 }}
+      topologySpreadConstraints:
+        - maxSkew: 1
+          topologyKey: topology.kubernetes.io/zone
+          whenUnsatisfiable: ScheduleAnyway
+          labelSelector:
+            matchLabels: {{- include "africair.selector" (dict "root" . "component" "web") | nindent 14 }}
+      containers:
+        - name: web
+          image: {{ include "africair.image" (dict "root" . "name" "africair-web") }}
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          ports:
+            - { name: http, containerPort: 8080 }
+          env:
+            - name: APP_ENV
+              value: {{ .Values.web.env.APP_ENV | quote }}
+            # The Ingress routes /api to the API directly; this proxy only serves direct pod access.
+            # nginx's resolver does not use search domains, hence the FQDN.
+            - name: API_UPSTREAM
+              value: {{ printf "http://%s-api.%s.svc.cluster.local:4000" (include "africair.fullname" .) .Release.Namespace | quote }}
+          readinessProbe:
+            httpGet: { path: /healthz, port: http }
+            periodSeconds: 5
+          livenessProbe:
+            httpGet: { path: /healthz, port: http }
+            periodSeconds: 10
+            failureThreshold: 3
+          securityContext: {{- include "africair.containerSecurityContext" . | nindent 12 }}
+          resources: {{- toYaml .Values.web.resources | nindent 12 }}
+          volumeMounts:
+            # nginx renders its templates into /tmp/nginx-conf and keeps pid and temp files in /tmp.
+            - { name: tmp, mountPath: /tmp }
+      volumes:
+        - name: tmp
+          emptyDir: { sizeLimit: 32Mi }
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ $name }}
+  labels: {{- include "africair.labels" . | nindent 4 }}
+  annotations:
+    alb.ingress.kubernetes.io/healthcheck-path: /healthz
+spec:
+  selector: {{- include "africair.selector" (dict "root" . "component" "web") | nindent 4 }}
+  ports:
+    - { name: http, port: 8080, targetPort: http }

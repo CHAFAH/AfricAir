@@ -1,0 +1,8 @@
+# Cluster-specific: from `terraform -chdir=infra/terraform/envs/staging output`.
+clusterName: africair-team1-staging
+region: eu-west-1        # passed explicitly: IMDS hop limit 1 hides the instance metadata from pods
+vpcId: vpc-0123456789abcdef0
+replicaCount: 2
+serviceAccount:
+  create: true
+  name: aws-load-balancer-controller

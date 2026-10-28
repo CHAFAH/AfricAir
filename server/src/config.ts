@@ -1,5 +1,5 @@
 import { createHash } from 'node:crypto'
-import { readFileSync, statSync } from 'node:fs'
+import { readFileSync } from 'node:fs'
 
 /**
  * All runtime configuration comes from environment variables, so the same image can run in any environment.
@@ -67,27 +67,28 @@ export type SecretValue = { value: string | null; source: 'file' | 'env' | 'none
 
 /** Reads NAME_FILE (preferred) or NAME. File reads are cached for `refreshSeconds`. */
 export function secretReader(name: string, env: Env = process.env, refreshSeconds = 10, now = () => Date.now()) {
-  let cache: { at: number; mtime: number; value: SecretValue } | null = null
+  let cache: { at: number; value: SecretValue } | null = null
   return (): SecretValue => {
     const file = env[`${name}_FILE`]?.trim()
     if (file) {
       if (cache && now() - cache.at < refreshSeconds * 1000) return cache.value
       try {
-        const mtime = statSync(file).mtimeMs
-        if (cache && cache.mtime === mtime && cache.value.source === 'file') {
+        // Compare content, not mtime: a rewrite within the filesystem's timestamp granularity keeps the
+        // same mtime and would be missed. Secret files are tiny, so re-reading them is cheap.
+        const content = readFileSync(file, 'utf8').trim() || null
+        if (cache && cache.value.source === 'file' && !cache.value.error && cache.value.value === content) {
           cache.at = now()
           return cache.value
         }
-        const content = readFileSync(file, 'utf8').trim()
-        cache = { at: now(), mtime, value: { value: content || null, source: 'file', loadedAt: new Date(now()).toISOString() } }
+        cache = { at: now(), value: { value: content, source: 'file', loadedAt: new Date(now()).toISOString() } }
       } catch (error) {
-        cache = { at: now(), mtime: -1, value: { value: null, source: 'file', error: (error as Error).message, loadedAt: new Date(now()).toISOString() } }
+        cache = { at: now(), value: { value: null, source: 'file', error: (error as Error).message, loadedAt: new Date(now()).toISOString() } }
       }
       return cache.value
     }
     const value = env[name]?.trim()
     if (!cache || cache.value.value !== (value || null)) {
-      cache = { at: now(), mtime: 0, value: { value: value || null, source: value ? 'env' : 'none', loadedAt: new Date(now()).toISOString() } }
+      cache = { at: now(), value: { value: value || null, source: value ? 'env' : 'none', loadedAt: new Date(now()).toISOString() } }
     }
     return cache.value
   }

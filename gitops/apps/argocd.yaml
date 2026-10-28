@@ -1,0 +1,29 @@
+# Argo CD manages its own Helm release. Terraform installed it once (helm_release "argocd", with
+# ignore_changes = all); from then on a change to gitops/values/argocd.yaml is a Git commit like any other.
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: argocd
+  namespace: argocd
+  annotations:
+    argocd.argoproj.io/sync-wave: "-5"
+spec:
+  project: platform
+  sources:
+    - repoURL: https://argoproj.github.io/argo-helm
+      chart: argo-cd
+      targetRevision: 10.11.6
+      helm:
+        releaseName: argocd # the release Terraform created: Argo CD adopts it instead of installing a second one
+        valueFiles: [$values/gitops/values/argocd.yaml]
+    - repoURL: https://github.com/CHAFAH/AfricAir.git
+      targetRevision: main
+      ref: values
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: argocd
+  syncPolicy:
+    automated:
+      prune: false # never let a bad commit prune Argo CD's own components
+      selfHeal: true
+    syncOptions: [ServerSideApply=true]

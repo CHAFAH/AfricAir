@@ -1,0 +1,39 @@
+name: Refresh airports
+
+# Weekly: regenerate src/data/airports.json from OurAirports. A PR is opened only if the data changed.
+on:
+  schedule:
+    - cron: "17 5 * * 1" # Mondays 05:17 UTC
+  workflow_dispatch:
+
+concurrency:
+  group: refresh-airports
+  cancel-in-progress: true
+
+permissions:
+  contents: write
+  pull-requests: write
+
+jobs:
+  refresh:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: ./.github/actions/setup
+      - name: Regenerate the dataset
+        run: pnpm data:airports
+      - name: Test and build with the new data
+        run: pnpm test && pnpm build
+      - name: Open a pull request if airports.json changed
+        uses: peter-evans/create-pull-request@v7
+        with:
+          add-paths: src/data/airports.json
+          branch: chore/refresh-airports
+          delete-branch: true
+          commit-message: "chore(data): refresh airports from OurAirports"
+          title: "chore(data): refresh airports from OurAirports"
+          body: |
+            Weekly refresh by `.github/workflows/refresh-airports.yml`.
+            `pnpm data:airports`, `pnpm test` and `pnpm build` passed with the new data.
+          labels: data

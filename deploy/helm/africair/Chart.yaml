@@ -1,0 +1,9 @@
+apiVersion: v2
+name: africair
+description: AfricAir flight booking site (web + API), with External Secrets, migrations, backups and ALB Ingress.
+type: application
+version: 1.0.0
+# Set by CI from the image tag (helm package --app-version <git-sha>).
+appVersion: "1.0.0"
+home: https://github.com/CHAFAH/AfricAir
+kubeVersion: ">=1.30.0-0"

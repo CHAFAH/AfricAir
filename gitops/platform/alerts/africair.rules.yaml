@@ -1,0 +1,136 @@
+# AfricAir alerting and SLO rules. Plain Prometheus format so `promtool test rules alerts/tests/*.yaml`
+# can test this exact file; templates/prometheusrules.yaml wraps it in a PrometheusRule.
+# Health checks are excluded from traffic, error and latency rules: kubelet and ALB probes would dilute them.
+groups:
+  - name: africair.slo.recording
+    rules:
+      # Availability SLO for /api/* (99.5%), error ratio over several windows (5xx / all).
+      - record: africair:slo_errors:ratio_rate5m
+        expr: |
+          sum by (namespace) (rate(africair_http_requests_total{route=~"/api/.*", route!~"/api/(healthz|readyz)", status=~"5.."}[5m]))
+          / sum by (namespace) (rate(africair_http_requests_total{route=~"/api/.*", route!~"/api/(healthz|readyz)"}[5m]))
+      - record: africair:slo_errors:ratio_rate30m
+        expr: |
+          sum by (namespace) (rate(africair_http_requests_total{route=~"/api/.*", route!~"/api/(healthz|readyz)", status=~"5.."}[30m]))
+          / sum by (namespace) (rate(africair_http_requests_total{route=~"/api/.*", route!~"/api/(healthz|readyz)"}[30m]))
+      - record: africair:slo_errors:ratio_rate1h
+        expr: |
+          sum by (namespace) (rate(africair_http_requests_total{route=~"/api/.*", route!~"/api/(healthz|readyz)", status=~"5.."}[1h]))
+          / sum by (namespace) (rate(africair_http_requests_total{route=~"/api/.*", route!~"/api/(healthz|readyz)"}[1h]))
+      - record: africair:slo_errors:ratio_rate6h
+        expr: |
+          sum by (namespace) (rate(africair_http_requests_total{route=~"/api/.*", route!~"/api/(healthz|readyz)", status=~"5.."}[6h]))
+          / sum by (namespace) (rate(africair_http_requests_total{route=~"/api/.*", route!~"/api/(healthz|readyz)"}[6h]))
+
+  - name: africair.alerts
+    rules:
+      - alert: AfricairApiDown
+        # No series at all (every pod gone / never scraped), or every target of a namespace down.
+        expr: absent(up{job="africair-api"}) or (sum by (namespace) (up{job="africair-api"}) == 0)
+        for: 2m
+        labels: { severity: critical }
+        annotations:
+          summary: AfricAir API is down
+          description: "No africair-api target is up in {{ $labels.namespace }}."
+          runbook_url: https://github.com/CHAFAH/AfricAir/blob/main/docs/runbook.md#africairapidown
+
+      - alert: AfricairDatabaseDown
+        expr: africair_db_up == 0
+        for: 2m
+        labels: { severity: critical }
+        annotations:
+          summary: AfricAir API cannot reach PostgreSQL
+          description: "{{ $labels.pod }} in {{ $labels.namespace }} reports the database as unreachable."
+          runbook_url: https://github.com/CHAFAH/AfricAir/blob/main/docs/runbook.md#africairdatabasedown
+
+      - alert: AfricairHighErrorRate
+        expr: |
+          sum by (namespace) (rate(africair_http_requests_total{route!~"/api/(healthz|readyz)", status=~"5.."}[5m]))
+          / sum by (namespace) (rate(africair_http_requests_total{route!~"/api/(healthz|readyz)"}[5m]))
+          > 0.05
+        for: 5m
+        labels: { severity: warning }
+        annotations:
+          summary: More than 5% of AfricAir API requests fail
+          description: "The 5xx ratio in {{ $labels.namespace }} has been above 5% for 5 minutes."
+          runbook_url: https://github.com/CHAFAH/AfricAir/blob/main/docs/runbook.md#africairhigherrorrate
+
+      - alert: AfricairHighLatency
+        # Aggregate the buckets first (sum by le): quantiles of individual pods can't be averaged.
+        expr: |
+          histogram_quantile(0.95,
+            sum by (namespace, le) (rate(africair_http_request_duration_seconds_bucket{route!~"/api/(healthz|readyz)"}[10m]))
+          ) > 0.5
+        for: 10m
+        labels: { severity: warning }
+        annotations:
+          summary: AfricAir API p95 latency above 500 ms
+          description: "p95 latency in {{ $labels.namespace }} has been above 500 ms for 10 minutes."
+          runbook_url: https://github.com/CHAFAH/AfricAir/blob/main/docs/runbook.md#africairhighlatency
+
+      - alert: AfricairNoBookings
+        # Booking counters have no series until the first booking, so a missing series counts as 0
+        # (`or … * 0`), else this alert could never fire on a fresh pod.
+        expr: |
+          (
+            sum by (namespace) (increase(africair_bookings_created_total{app_env="production"}[30m]))
+            or sum by (namespace) (africair_build_info{app_env="production"}) * 0
+          ) == 0
+          and on (namespace)
+          sum by (namespace) (increase(africair_http_requests_total{app_env="production", route!~"/api/(healthz|readyz)"}[30m])) > 0
+        for: 30m
+        labels: { severity: warning }
+        annotations:
+          summary: No bookings in production for 30 minutes
+          description: "{{ $labels.namespace }} serves traffic but nobody has booked in 30 minutes."
+          runbook_url: https://github.com/CHAFAH/AfricAir/blob/main/docs/runbook.md#africairnobookings
+
+      - alert: AfricairPromoAbuse
+        expr: sum by (namespace) (rate(africair_promo_validations_total{result="rate-limited"}[5m])) > 1
+        for: 5m
+        labels: { severity: warning }
+        annotations:
+          summary: Promo-code guessing
+          description: "More than 1 rate-limited promo validation per second in {{ $labels.namespace }}."
+          runbook_url: https://github.com/CHAFAH/AfricAir/blob/main/docs/runbook.md#africairpromoabuse
+
+      - alert: AfricairAdminBruteForce
+        expr: sum by (namespace) (rate(africair_admin_requests_total{result="denied"}[5m])) > 0.2
+        for: 5m
+        labels: { severity: critical }
+        annotations:
+          summary: Admin token brute force
+          description: "More than 0.2 denied admin requests per second in {{ $labels.namespace }}."
+          runbook_url: https://github.com/CHAFAH/AfricAir/blob/main/docs/runbook.md#africairadminbruteforce
+
+      - alert: AfricairMaintenanceModeOn
+        expr: max by (namespace) (africair_maintenance_mode{app_env="production"}) == 1
+        for: 15m
+        labels: { severity: info }
+        annotations:
+          summary: Production is in maintenance mode
+          description: "MAINTENANCE_MODE has been on in {{ $labels.namespace }} for 15 minutes: bookings are blocked."
+          runbook_url: https://github.com/CHAFAH/AfricAir/blob/main/docs/runbook.md#africairmaintenancemodeon
+
+      # SLO 99.5% → error budget 0.5%. Multi-window burn rates (Google SRE workbook).
+      - alert: AfricairErrorBudgetBurnFast
+        expr: |
+          africair:slo_errors:ratio_rate1h > (14.4 * 0.005)
+          and africair:slo_errors:ratio_rate5m > (14.4 * 0.005)
+        for: 2m
+        labels: { severity: critical }
+        annotations:
+          summary: AfricAir API is burning its error budget fast
+          description: "At this rate {{ $labels.namespace }} spends 2% of the 30-day error budget in an hour."
+          runbook_url: https://github.com/CHAFAH/AfricAir/blob/main/docs/runbook.md#africairerrorbudgetburn
+
+      - alert: AfricairErrorBudgetBurnSlow
+        expr: |
+          africair:slo_errors:ratio_rate6h > (6 * 0.005)
+          and africair:slo_errors:ratio_rate30m > (6 * 0.005)
+        for: 15m
+        labels: { severity: warning }
+        annotations:
+          summary: AfricAir API is burning its error budget
+          description: "At this rate {{ $labels.namespace }} spends 5% of the 30-day error budget in 6 hours."
+          runbook_url: https://github.com/CHAFAH/AfricAir/blob/main/docs/runbook.md#africairerrorbudgetburn

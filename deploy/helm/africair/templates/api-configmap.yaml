@@ -1,0 +1,16 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ include "africair.fullname" . }}-api
+  labels: {{- include "africair.labels" . | nindent 4 }}
+data:
+  {{- range $k, $v := .Values.api.env }}
+  {{- if ne $k "APP_VERSION" }}
+  {{ $k }}: {{ $v | quote }}
+  {{- end }}
+  {{- end }}
+  # Defaults to the image tag, so the banner and /#/status show what is deployed.
+  APP_VERSION: {{ default (include "africair.tag" .) .Values.api.env.APP_VERSION | quote }}
+  # Secrets arrive as files from the africair-app ExternalSecret (live rotation without restarts).
+  ADMIN_TOKEN_FILE: {{ printf "%s/ADMIN_TOKEN" .Values.secrets.mountPath | quote }}
+  PROMO_CODES_FILE: {{ printf "%s/PROMO_CODES" .Values.secrets.mountPath | quote }}

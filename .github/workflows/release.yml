@@ -1,0 +1,80 @@
+name: Release
+
+# Tag vX.Y.Z on a commit already built on main:
+#   promote: re-tag the SAME ECR digests (:<sha> → :vX.Y.Z), no rebuild
+#   ⏸ approval (environment "production": required reviewers, deployment rule "tags v*")
+#   deploy production → smoke test → GitHub Release listing the digests
+on:
+  push:
+    tags: ["v[0-9]+.[0-9]+.[0-9]+"]
+
+permissions:
+  contents: read
+
+env:
+  AWS_REGION: ${{ vars.AWS_REGION || 'eu-west-1' }}
+
+jobs:
+  promote:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    permissions:
+      contents: read
+      id-token: write
+    outputs:
+      digests: ${{ steps.promote.outputs.digests }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ vars.AWS_CI_ROLE_ARN }} # trust policy: sub repo:<repo>:ref:refs/tags/v*
+          aws-region: ${{ env.AWS_REGION }}
+      - name: Re-tag :${{ github.sha }} as :${{ github.ref_name }}
+        id: promote
+        run: |
+          out=$(scripts/ci/promote-images.sh "$GITHUB_SHA" "$GITHUB_REF_NAME")
+          echo "$out"
+          { echo 'digests<<EOF'; echo "$out"; echo 'EOF'; } >> "$GITHUB_OUTPUT"
+          { echo "### Promoted without rebuild"; echo '```'; echo "$out"; echo '```'; } >> "$GITHUB_STEP_SUMMARY"
+
+  deploy-production:
+    needs: promote
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    # Never two production deploys at once; a second tag waits instead of cancelling a deploy in flight.
+    concurrency:
+      group: deploy-production
+      cancel-in-progress: false
+    environment:
+      name: production
+      url: ${{ steps.deploy.outputs.url }}
+    permissions:
+      contents: read
+      id-token: write
+    steps:
+      - uses: actions/checkout@v4
+      - uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ vars.AWS_PRODUCTION_ROLE_ARN }} # trust policy: sub repo:<repo>:environment:production
+          aws-region: ${{ env.AWS_REGION }}
+      - name: Deploy :${{ github.ref_name }}
+        id: deploy
+        run: echo "url=$(scripts/ci/deploy-ec2.sh production "$GITHUB_REF_NAME" | tail -n1)" >> "$GITHUB_OUTPUT"
+      - name: Smoke test
+        run: scripts/ci/smoke.sh "${{ steps.deploy.outputs.url }}" "$GITHUB_SHA" production
+
+  github-release:
+    needs: [promote, deploy-production]
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: write
+    steps:
+      - name: Create the release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          DIGESTS: ${{ needs.promote.outputs.digests }}
+        run: |
+          fence='```'
+          printf 'Images (same digests as built on main for %s):\n\n%s\n%s\n%s\n' "$GITHUB_SHA" "$fence" "$DIGESTS" "$fence" > notes.md
+          gh release create "$GITHUB_REF_NAME" --repo "$GITHUB_REPOSITORY" --title "$GITHUB_REF_NAME" \
+            --notes-file notes.md --verify-tag --generate-notes

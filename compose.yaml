@@ -1,0 +1,131 @@
+# AfricAir staging stack: PostgreSQL, a one-shot migration, two API replicas and the web front end.
+#   scripts/docker/make-secrets.sh          # once: random secrets in ./secrets (git-ignored)
+#   docker compose up -d --build            # http://localhost:8080
+#   docker compose --profile test up --build --exit-code-from e2e
+name: africair
+
+x-hardening: &hardening
+  read_only: true
+  tmpfs:
+    - /tmp:size=16m,mode=1777
+  cap_drop: [ALL]
+  security_opt: [no-new-privileges:true]
+  mem_limit: 128m
+  cpus: 0.5
+  pids_limit: 100
+
+services:
+  db:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_DB: africair
+      POSTGRES_USER: africair
+      POSTGRES_PASSWORD_FILE: /run/secrets/db_password
+    secrets: [db_password]
+    volumes:
+      - db-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U africair -d africair"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+    networks: [backend]
+    security_opt: [no-new-privileges:true]
+    mem_limit: 256m
+
+  migrate:
+    image: africair-api:local
+    build: &api-build
+      context: .
+      dockerfile: Dockerfile.api
+      args:
+        VERSION: ${APP_VERSION:-1.0.0}
+        GIT_SHA: ${GIT_SHA:-unknown}
+        BUILD_DATE: ${BUILD_DATE:-unknown}
+    command: ["node", "dist/migrate.js"]
+    environment:
+      DATABASE_URL_FILE: /run/secrets/database_url
+    secrets: [database_url]
+    depends_on:
+      db:
+        condition: service_healthy
+    restart: "no"
+    networks: [backend]
+    <<: *hardening
+
+  api:
+    image: africair-api:local
+    build: *api-build
+    deploy:
+      replicas: 2
+    env_file: config/staging.env
+    environment:
+      # Secrets arrive as files (Compose secrets). Their values never appear in `env` or `docker inspect`.
+      DATABASE_URL_FILE: /run/secrets/database_url
+      ADMIN_TOKEN_FILE: /run/secrets/admin_token
+      PROMO_CODES_FILE: /run/secrets/promo_codes
+    secrets: [database_url, admin_token, promo_codes]
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+    # No `ports:`: the API is reachable only from the web container, over the backend network.
+    networks: [backend]
+    stop_grace_period: 20s
+    <<: *hardening
+
+  web:
+    image: africair-web:local
+    build:
+      context: .
+      dockerfile: Dockerfile.web
+      args:
+        VERSION: ${APP_VERSION:-1.0.0}
+        GIT_SHA: ${GIT_SHA:-unknown}
+        BUILD_DATE: ${BUILD_DATE:-unknown}
+    environment:
+      API_UPSTREAM: http://api:4000
+      APP_ENV: staging
+    ports:
+      - "8080:8080"
+    depends_on:
+      api:
+        condition: service_healthy
+    networks: [frontend, backend]
+    <<: *hardening
+
+  e2e:
+    profiles: [test]
+    image: mcr.microsoft.com/playwright:v1.64.0-noble
+    working_dir: /work
+    environment:
+      CI: "true"
+      BASE_URL: http://web:8080
+    command: ["sh", "-c", "corepack enable && pnpm install --frozen-lockfile && pnpm test:e2e"]
+    volumes:
+      - .:/work
+      # Linux node_modules in anonymous volumes, so the host's (macOS) node_modules is left alone.
+      - /work/node_modules
+      - /work/server/node_modules
+    depends_on:
+      web:
+        condition: service_healthy
+    networks: [frontend]
+    ipc: host
+
+networks:
+  frontend: {}
+  backend:
+    internal: true # no route to the internet: db and api only talk to each other and to web
+
+volumes:
+  db-data: {}
+
+secrets:
+  db_password:
+    file: ./secrets/db_password
+  database_url:
+    file: ./secrets/database_url
+  admin_token:
+    file: ./secrets/admin_token
+  promo_codes:
+    file: ./secrets/promo_codes

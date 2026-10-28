@@ -1,0 +1,22 @@
+# Keep the build context small and free of secrets and host-specific binaries.
+**/node_modules
+dist
+server/dist
+**/*.tsbuildinfo
+.git
+.github
+.circleci
+test-results
+playwright-report
+artifacts
+infra
+gitops
+docs
+projects
+secrets
+secrets.example
+**/.env*
+!**/.env.example
+**/.DS_Store
+**/.terraform
+*.tfstate*

@@ -121,3 +121,15 @@ AfricAir doubles as the sample application for a five-part DevOps bootcamp. The 
 | 3 | [CI/CD with GitHub Actions and CircleCI](projects/03-cicd-github-actions-circleci/README.md) | Pipelines, service containers, caching, OIDC, build-once/promote, approvals |
 | 4 | [EKS with Terraform, Helm, RDS, External Secrets & Ingress](projects/04-kubernetes-eks-terraform/README.md) | Exact EKS/RDS spec in Terraform, Helm chart, ESO + Secrets Manager with live rotation, ALB Ingress |
 | 5 | [GitOps with Argo CD, plus Prometheus & Grafana](projects/05-gitops-argocd-observability/README.md) | Argo CD app-of-apps, kube-prometheus-stack, ServiceMonitor, dashboards and alerts as code, incident drills |
+
+### Solutions in this repository
+
+| # | Implementation | Answers |
+|---|---|---|
+| 1 | `scripts/ops/`, `deploy/{nginx,systemd,logrotate,config,iam}/`, Terraform `envs/shared` (EC2, S3 + CloudFront) | [ANSWERS](projects/01-linux-scripting-build-aws/ANSWERS.md) |
+| 2 | `Dockerfile.web`, `Dockerfile.api`, `.dockerignore`, `compose.yaml`, `config/`, `secrets.example/`, `deploy/docker/`, `deploy/nginx/templates/`, [docs/docker.md](docs/docker.md), Terraform `modules/ecr` | [ANSWERS](projects/02-docker/ANSWERS.md) |
+| 3 | `.github/`, `.circleci/config.yml`, `scripts/ci/`, `deploy/ec2/`, `deploy/iam/*-oidc-trust.json`, [docs/ci-comparison.md](docs/ci-comparison.md), Terraform `modules/ci-oidc` | [ANSWERS](projects/03-cicd-github-actions-circleci/ANSWERS.md) |
+| 4 | [`infra/terraform/`](infra/terraform/README.md), `deploy/helm/africair/`, `deploy/k8s/`, `Makefile`, [runbook](docs/runbook.md), [architecture](docs/architecture.md), [spec evidence](docs/cluster-spec-evidence.md) | [ANSWERS](projects/04-kubernetes-eks-terraform/ANSWERS.md) |
+| 5 | `gitops/` (app-of-apps, values, platform chart with dashboards and tested alert rules) | [ANSWERS](projects/05-gitops-argocd-observability/ANSWERS.md) |
+
+Quick local run of the full stack: `scripts/docker/make-secrets.sh && docker compose up -d --build`, then open http://localhost:8080.

@@ -1,0 +1,39 @@
+name: Setup AfricAir
+description: Node.js, pnpm through corepack, a pnpm-store cache keyed on the lockfile, and a frozen install.
+inputs:
+  node-version:
+    description: Node.js version
+    default: "22"
+  install:
+    description: Run pnpm install --frozen-lockfile
+    default: "true"
+runs:
+  using: composite
+  steps:
+    - uses: actions/setup-node@v4
+      with:
+        node-version: ${{ inputs.node-version }}
+
+    - name: Enable corepack (pnpm version from package.json "packageManager")
+      shell: bash
+      run: |
+        corepack enable
+        pnpm --version
+
+    - name: Locate the pnpm store
+      id: store
+      shell: bash
+      run: echo "path=$(pnpm store path --silent)" >> "$GITHUB_OUTPUT"
+
+    # Keyed on the lockfile: any dependency change gets a new cache, so nothing stale is ever installed.
+    # restore-keys only seeds the store; --frozen-lockfile still installs exactly what the lockfile says.
+    - uses: actions/cache@v4
+      with:
+        path: ${{ steps.store.outputs.path }}
+        key: pnpm-store-${{ runner.os }}-node${{ inputs.node-version }}-${{ hashFiles('pnpm-lock.yaml') }}
+        restore-keys: pnpm-store-${{ runner.os }}-node${{ inputs.node-version }}-
+
+    - name: Install
+      if: inputs.install == 'true'
+      shell: bash
+      run: pnpm install --frozen-lockfile

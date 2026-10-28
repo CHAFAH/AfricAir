@@ -1,0 +1,150 @@
+{
+  "title": "AfricAir — Service overview",
+  "uid": "africair-overview",
+  "tags": ["africair"],
+  "timezone": "utc",
+  "schemaVersion": 39,
+  "version": 1,
+  "refresh": "30s",
+  "time": { "from": "now-3h", "to": "now" },
+  "templating": {
+    "list": [
+      { "name": "datasource", "type": "datasource", "query": "prometheus", "current": { "text": "Prometheus", "value": "prometheus" } },
+      {
+        "name": "namespace", "type": "query", "datasource": { "type": "prometheus", "uid": "${datasource}" },
+        "query": { "query": "label_values(africair_build_info, namespace)", "refId": "ns" },
+        "refresh": 2, "multi": true, "includeAll": true, "current": { "text": "All", "value": "$__all" }
+      },
+      {
+        "name": "pod", "type": "query", "datasource": { "type": "prometheus", "uid": "${datasource}" },
+        "query": { "query": "label_values(africair_build_info{namespace=~\"$namespace\"}, pod)", "refId": "pod" },
+        "refresh": 2, "multi": true, "includeAll": true, "current": { "text": "All", "value": "$__all" }
+      }
+    ]
+  },
+  "annotations": {
+    "list": [
+      {
+        "name": "Deployments",
+        "datasource": { "type": "prometheus", "uid": "${datasource}" },
+        "enable": true,
+        "iconColor": "purple",
+        "expr": "sum by (namespace, version, commit) (africair_build_info{namespace=~\"$namespace\"}) unless sum by (namespace, version, commit) (africair_build_info{namespace=~\"$namespace\"} offset 5m)",
+        "step": "60s",
+        "titleFormat": "Deploy {{version}}",
+        "textFormat": "{{namespace}} commit {{commit}}"
+      }
+    ]
+  },
+  "panels": [
+    { "type": "row", "title": "Traffic", "gridPos": { "h": 1, "w": 24, "x": 0, "y": 0 }, "collapsed": false, "panels": [] },
+    {
+      "type": "timeseries", "title": "Requests/s by route", "gridPos": { "h": 8, "w": 8, "x": 0, "y": 1 },
+      "datasource": { "type": "prometheus", "uid": "${datasource}" },
+      "fieldConfig": { "defaults": { "unit": "reqps" }, "overrides": [] },
+      "targets": [{ "refId": "A", "legendFormat": "{{route}}",
+        "expr": "sum by (route) (rate(africair_http_requests_total{namespace=~\"$namespace\", pod=~\"$pod\", route!~\"/api/(healthz|readyz)\"}[$__rate_interval]))" }]
+    },
+    {
+      "type": "timeseries", "title": "5xx error ratio", "gridPos": { "h": 8, "w": 8, "x": 8, "y": 1 },
+      "datasource": { "type": "prometheus", "uid": "${datasource}" },
+      "fieldConfig": { "defaults": { "unit": "percentunit", "min": 0,
+        "thresholds": { "mode": "absolute", "steps": [{ "color": "green", "value": null }, { "color": "red", "value": 0.05 }] } }, "overrides": [] },
+      "targets": [{ "refId": "A", "legendFormat": "{{namespace}}",
+        "expr": "sum by (namespace) (rate(africair_http_requests_total{namespace=~\"$namespace\", pod=~\"$pod\", status=~\"5..\", route!~\"/api/(healthz|readyz)\"}[$__rate_interval])) / sum by (namespace) (rate(africair_http_requests_total{namespace=~\"$namespace\", pod=~\"$pod\", route!~\"/api/(healthz|readyz)\"}[$__rate_interval]))" }]
+    },
+    {
+      "type": "timeseries", "title": "p95 latency by route", "gridPos": { "h": 8, "w": 8, "x": 16, "y": 1 },
+      "datasource": { "type": "prometheus", "uid": "${datasource}" },
+      "fieldConfig": { "defaults": { "unit": "s" }, "overrides": [] },
+      "targets": [{ "refId": "A", "legendFormat": "{{route}}",
+        "expr": "histogram_quantile(0.95, sum by (le, route) (rate(africair_http_request_duration_seconds_bucket{namespace=~\"$namespace\", pod=~\"$pod\", route!~\"/api/(healthz|readyz)\"}[$__rate_interval])))" }]
+    },
+
+    { "type": "row", "title": "Business", "gridPos": { "h": 1, "w": 24, "x": 0, "y": 9 }, "collapsed": false, "panels": [] },
+    {
+      "type": "timeseries", "title": "Bookings per minute by cabin", "gridPos": { "h": 8, "w": 6, "x": 0, "y": 10 },
+      "datasource": { "type": "prometheus", "uid": "${datasource}" },
+      "fieldConfig": { "defaults": { "unit": "short", "custom": { "stacking": { "mode": "normal" } } }, "overrides": [] },
+      "targets": [{ "refId": "A", "legendFormat": "{{cabin}}",
+        "expr": "sum by (cabin) (rate(africair_bookings_created_total{namespace=~\"$namespace\"}[$__rate_interval])) * 60" }]
+    },
+    {
+      "type": "timeseries", "title": "Revenue per hour (USD)", "gridPos": { "h": 8, "w": 6, "x": 6, "y": 10 },
+      "datasource": { "type": "prometheus", "uid": "${datasource}" },
+      "fieldConfig": { "defaults": { "unit": "currencyUSD" }, "overrides": [] },
+      "targets": [{ "refId": "A", "legendFormat": "{{namespace}}",
+        "expr": "sum by (namespace) (increase(africair_booking_value_usd_total{namespace=~\"$namespace\"}[1h]))" }]
+    },
+    {
+      "type": "timeseries", "title": "Promo validations by result", "gridPos": { "h": 8, "w": 6, "x": 12, "y": 10 },
+      "datasource": { "type": "prometheus", "uid": "${datasource}" },
+      "fieldConfig": { "defaults": { "unit": "reqps" }, "overrides": [] },
+      "targets": [{ "refId": "A", "legendFormat": "{{result}}",
+        "expr": "sum by (result) (rate(africair_promo_validations_total{namespace=~\"$namespace\"}[$__rate_interval]))" }]
+    },
+    {
+      "type": "stat", "title": "Cancellations (last hour)", "gridPos": { "h": 8, "w": 6, "x": 18, "y": 10 },
+      "datasource": { "type": "prometheus", "uid": "${datasource}" },
+      "options": { "reduceOptions": { "calcs": ["lastNotNull"] }, "colorMode": "value" },
+      "targets": [{ "refId": "A",
+        "expr": "sum(increase(africair_bookings_cancelled_total{namespace=~\"$namespace\"}[1h])) or vector(0)" }]
+    },
+
+    { "type": "row", "title": "Dependencies", "gridPos": { "h": 1, "w": 24, "x": 0, "y": 18 }, "collapsed": false, "panels": [] },
+    {
+      "type": "stat", "title": "Database", "gridPos": { "h": 6, "w": 12, "x": 0, "y": 19 },
+      "datasource": { "type": "prometheus", "uid": "${datasource}" },
+      "options": { "reduceOptions": { "calcs": ["lastNotNull"] }, "colorMode": "background", "textMode": "value_and_name" },
+      "fieldConfig": {
+        "defaults": {
+          "mappings": [
+            { "type": "value", "options": { "1": { "text": "UP", "color": "green" }, "0": { "text": "DOWN", "color": "red" }, "-1": { "text": "not configured", "color": "gray" } } }
+          ],
+          "thresholds": { "mode": "absolute", "steps": [{ "color": "red", "value": null }, { "color": "green", "value": 1 }] }
+        }, "overrides": []
+      },
+      "targets": [{ "refId": "A", "legendFormat": "{{namespace}}", "expr": "min by (namespace) (africair_db_up{namespace=~\"$namespace\", pod=~\"$pod\"})" }]
+    },
+    {
+      "type": "stat", "title": "Maintenance mode", "gridPos": { "h": 6, "w": 12, "x": 12, "y": 19 },
+      "datasource": { "type": "prometheus", "uid": "${datasource}" },
+      "options": { "reduceOptions": { "calcs": ["lastNotNull"] }, "colorMode": "background", "textMode": "value_and_name" },
+      "fieldConfig": {
+        "defaults": {
+          "mappings": [{ "type": "value", "options": { "1": { "text": "ON: bookings blocked", "color": "orange" }, "0": { "text": "off", "color": "green" } } }]
+        }, "overrides": []
+      },
+      "targets": [{ "refId": "A", "legendFormat": "{{namespace}}", "expr": "max by (namespace) (africair_maintenance_mode{namespace=~\"$namespace\"})" }]
+    },
+
+    { "type": "row", "title": "Runtime", "gridPos": { "h": 1, "w": 24, "x": 0, "y": 25 }, "collapsed": false, "panels": [] },
+    {
+      "type": "timeseries", "title": "Pod restarts (1h)", "gridPos": { "h": 8, "w": 6, "x": 0, "y": 26 },
+      "datasource": { "type": "prometheus", "uid": "${datasource}" },
+      "targets": [{ "refId": "A", "legendFormat": "{{pod}}",
+        "expr": "sum by (pod) (increase(kube_pod_container_status_restarts_total{namespace=~\"$namespace\", container=~\"api|web\"}[1h]))" }]
+    },
+    {
+      "type": "timeseries", "title": "Container memory (working set)", "gridPos": { "h": 8, "w": 6, "x": 6, "y": 26 },
+      "datasource": { "type": "prometheus", "uid": "${datasource}" },
+      "fieldConfig": { "defaults": { "unit": "bytes" }, "overrides": [] },
+      "targets": [{ "refId": "A", "legendFormat": "{{pod}}",
+        "expr": "sum by (pod) (container_memory_working_set_bytes{namespace=~\"$namespace\", container=~\"api|web\"})" }]
+    },
+    {
+      "type": "timeseries", "title": "Container CPU", "gridPos": { "h": 8, "w": 6, "x": 12, "y": 26 },
+      "datasource": { "type": "prometheus", "uid": "${datasource}" },
+      "fieldConfig": { "defaults": { "unit": "cores" }, "overrides": [] },
+      "targets": [{ "refId": "A", "legendFormat": "{{pod}}",
+        "expr": "sum by (pod) (rate(container_cpu_usage_seconds_total{namespace=~\"$namespace\", container=~\"api|web\"}[$__rate_interval]))" }]
+    },
+    {
+      "type": "timeseries", "title": "Node.js event-loop lag p99", "gridPos": { "h": 8, "w": 6, "x": 18, "y": 26 },
+      "datasource": { "type": "prometheus", "uid": "${datasource}" },
+      "fieldConfig": { "defaults": { "unit": "s" }, "overrides": [] },
+      "targets": [{ "refId": "A", "legendFormat": "{{pod}}",
+        "expr": "max by (pod) (africair_api_nodejs_eventloop_lag_p99_seconds{namespace=~\"$namespace\", pod=~\"$pod\"})" }]
+    }
+  ]
+}

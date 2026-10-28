@@ -1,0 +1,194 @@
+# promtool test rules gitops/platform/alerts/tests/*.yaml
+rule_files:
+  - ../africair.rules.yaml
+evaluation_interval: 1m
+
+tests:
+  - name: api down when every target of a namespace is down, after 2 minutes
+    interval: 1m
+    input_series:
+      - series: 'up{job="africair-api", namespace="africair-staging", pod="api-a"}'
+        values: "1 0 0 0 0"
+      - series: 'up{job="africair-api", namespace="africair-staging", pod="api-b"}'
+        values: "1 0 0 0 0"
+    alert_rule_test:
+      - eval_time: 1m
+        alertname: AfricairApiDown
+        exp_alerts: []
+      - eval_time: 4m
+        alertname: AfricairApiDown
+        exp_alerts:
+          - exp_labels: { severity: critical, namespace: africair-staging }
+            exp_annotations:
+              summary: AfricAir API is down
+              description: "No africair-api target is up in africair-staging."
+              runbook_url: https://github.com/CHAFAH/AfricAir/blob/main/docs/runbook.md#africairapidown
+
+  - name: one pod down is not an outage
+    interval: 1m
+    input_series:
+      - series: 'up{job="africair-api", namespace="africair-staging", pod="api-a"}'
+        values: "1x10"
+      - series: 'up{job="africair-api", namespace="africair-staging", pod="api-b"}'
+        values: "0x10"
+    alert_rule_test:
+      - eval_time: 10m
+        alertname: AfricairApiDown
+        exp_alerts: []
+
+  - name: database down
+    interval: 1m
+    input_series:
+      - series: 'africair_db_up{namespace="africair-staging", pod="api-a"}'
+        values: "1 0 0 0 0"
+      - series: 'africair_db_up{namespace="africair-staging", pod="api-b"}'
+        values: "1 1 1 1 1"
+    alert_rule_test:
+      - eval_time: 4m
+        alertname: AfricairDatabaseDown
+        exp_alerts:
+          - exp_labels: { severity: critical, namespace: africair-staging, pod: api-a }
+            exp_annotations:
+              summary: AfricAir API cannot reach PostgreSQL
+              description: "api-a in africair-staging reports the database as unreachable."
+              runbook_url: https://github.com/CHAFAH/AfricAir/blob/main/docs/runbook.md#africairdatabasedown
+
+  - name: 10% errors fire HighErrorRate; health checks are ignored
+    interval: 1m
+    input_series:
+      # 10 req/s, of which 1 req/s is a 500 → 10%
+      - series: 'africair_http_requests_total{namespace="africair-staging", route="/api/config", status="200"}'
+        values: "0+540x15"
+      - series: 'africair_http_requests_total{namespace="africair-staging", route="/api/config", status="500"}'
+        values: "0+60x15"
+      # A flood of failing probes must not count
+      - series: 'africair_http_requests_total{namespace="africair-staging", route="/api/readyz", status="503"}'
+        values: "0+6000x15"
+    alert_rule_test:
+      - eval_time: 12m
+        alertname: AfricairHighErrorRate
+        exp_alerts:
+          - exp_labels: { severity: warning, namespace: africair-staging }
+            exp_annotations:
+              summary: More than 5% of AfricAir API requests fail
+              description: "The 5xx ratio in africair-staging has been above 5% for 5 minutes."
+              runbook_url: https://github.com/CHAFAH/AfricAir/blob/main/docs/runbook.md#africairhigherrorrate
+
+  - name: p95 above 500 ms fires HighLatency
+    interval: 1m
+    input_series:
+      # every request between 0.5 s and 1 s
+      - series: 'africair_http_request_duration_seconds_bucket{namespace="africair-production", route="/api/bookings", le="0.25"}'
+        values: "0+0x30"
+      - series: 'africair_http_request_duration_seconds_bucket{namespace="africair-production", route="/api/bookings", le="0.5"}'
+        values: "0+0x30"
+      - series: 'africair_http_request_duration_seconds_bucket{namespace="africair-production", route="/api/bookings", le="1"}'
+        values: "0+60x30"
+      - series: 'africair_http_request_duration_seconds_bucket{namespace="africair-production", route="/api/bookings", le="+Inf"}'
+        values: "0+60x30"
+    alert_rule_test:
+      - eval_time: 25m
+        alertname: AfricairHighLatency
+        exp_alerts:
+          - exp_labels: { severity: warning, namespace: africair-production }
+            exp_annotations:
+              summary: AfricAir API p95 latency above 500 ms
+              description: "p95 latency in africair-production has been above 500 ms for 10 minutes."
+              runbook_url: https://github.com/CHAFAH/AfricAir/blob/main/docs/runbook.md#africairhighlatency
+
+  - name: traffic but no bookings in production (booking counter never created)
+    interval: 1m
+    input_series:
+      - series: 'africair_build_info{namespace="africair-production", app_env="production", version="v1.0.0", commit="abc"}'
+        values: "1x90"
+      - series: 'africair_http_requests_total{namespace="africair-production", app_env="production", route="/api/config", status="200"}'
+        values: "0+30x90"
+    alert_rule_test:
+      - eval_time: 75m
+        alertname: AfricairNoBookings
+        exp_alerts:
+          - exp_labels: { severity: warning, namespace: africair-production }
+            exp_annotations:
+              summary: No bookings in production for 30 minutes
+              description: "africair-production serves traffic but nobody has booked in 30 minutes."
+              runbook_url: https://github.com/CHAFAH/AfricAir/blob/main/docs/runbook.md#africairnobookings
+
+  - name: bookings keep NoBookings quiet; staging never alerts
+    interval: 1m
+    input_series:
+      - series: 'africair_build_info{namespace="africair-production", app_env="production", version="v1.0.0", commit="abc"}'
+        values: "1x90"
+      - series: 'africair_http_requests_total{namespace="africair-production", app_env="production", route="/api/bookings", status="201"}'
+        values: "0+1x90"
+      - series: 'africair_bookings_created_total{namespace="africair-production", app_env="production", cabin="economy", trip_type="return"}'
+        values: "0+1x90"
+      - series: 'africair_build_info{namespace="africair-staging", app_env="staging", version="abc", commit="abc"}'
+        values: "1x90"
+      - series: 'africair_http_requests_total{namespace="africair-staging", app_env="staging", route="/api/config", status="200"}'
+        values: "0+30x90"
+    alert_rule_test:
+      - eval_time: 75m
+        alertname: AfricairNoBookings
+        exp_alerts: []
+
+  - name: promo guessing and admin brute force
+    interval: 1m
+    input_series:
+      - series: 'africair_promo_validations_total{namespace="africair-staging", result="rate-limited"}'
+        values: "0+120x15"   # 2/s
+      - series: 'africair_admin_requests_total{namespace="africair-staging", result="denied"}'
+        values: "0+30x15"    # 0.5/s
+    alert_rule_test:
+      - eval_time: 12m
+        alertname: AfricairPromoAbuse
+        exp_alerts:
+          - exp_labels: { severity: warning, namespace: africair-staging }
+            exp_annotations:
+              summary: Promo-code guessing
+              description: "More than 1 rate-limited promo validation per second in africair-staging."
+              runbook_url: https://github.com/CHAFAH/AfricAir/blob/main/docs/runbook.md#africairpromoabuse
+      - eval_time: 12m
+        alertname: AfricairAdminBruteForce
+        exp_alerts:
+          - exp_labels: { severity: critical, namespace: africair-staging }
+            exp_annotations:
+              summary: Admin token brute force
+              description: "More than 0.2 denied admin requests per second in africair-staging."
+              runbook_url: https://github.com/CHAFAH/AfricAir/blob/main/docs/runbook.md#africairadminbruteforce
+
+  - name: maintenance mode alerts in production only
+    interval: 1m
+    input_series:
+      - series: 'africair_maintenance_mode{namespace="africair-production", app_env="production", pod="api-a"}'
+        values: "1x20"
+      - series: 'africair_maintenance_mode{namespace="africair-staging", app_env="staging", pod="api-a"}'
+        values: "1x20"
+    alert_rule_test:
+      - eval_time: 10m
+        alertname: AfricairMaintenanceModeOn
+        exp_alerts: []
+      - eval_time: 16m
+        alertname: AfricairMaintenanceModeOn
+        exp_alerts:
+          - exp_labels: { severity: info, namespace: africair-production }
+            exp_annotations:
+              summary: Production is in maintenance mode
+              description: "MAINTENANCE_MODE has been on in africair-production for 15 minutes: bookings are blocked."
+              runbook_url: https://github.com/CHAFAH/AfricAir/blob/main/docs/runbook.md#africairmaintenancemodeon
+
+  - name: fast error-budget burn (20% errors)
+    interval: 1m
+    input_series:
+      - series: 'africair_http_requests_total{namespace="africair-production", route="/api/bookings", status="201"}'
+        values: "0+48x70"
+      - series: 'africair_http_requests_total{namespace="africair-production", route="/api/bookings", status="503"}'
+        values: "0+12x70"
+    alert_rule_test:
+      - eval_time: 65m
+        alertname: AfricairErrorBudgetBurnFast
+        exp_alerts:
+          - exp_labels: { severity: critical, namespace: africair-production }
+            exp_annotations:
+              summary: AfricAir API is burning its error budget fast
+              description: "At this rate africair-production spends 2% of the 30-day error budget in an hour."
+              runbook_url: https://github.com/CHAFAH/AfricAir/blob/main/docs/runbook.md#africairerrorbudgetburn

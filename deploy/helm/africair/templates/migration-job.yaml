@@ -1,0 +1,39 @@
+{{- if .Values.migrations.enabled }}
+# Runs before every install/upgrade, after the ExternalSecrets (weight -10). The schema migration is
+# idempotent and takes an advisory lock, so a retry or a concurrent run is safe.
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: {{ include "africair.fullname" . }}-migrate
+  labels: {{- include "africair.labels" . | nindent 4 }}
+  annotations: {{- include "africair.ordering" (dict "root" . "weight" "0" "job" true) | nindent 4 }}
+spec:
+  # The ExternalSecret may still be syncing when the first pod starts (secret not found → retry).
+  backoffLimit: {{ .Values.migrations.backoffLimit }}
+  ttlSecondsAfterFinished: {{ .Values.migrations.ttlSecondsAfterFinished }}
+  activeDeadlineSeconds: 300
+  template:
+    metadata:
+      labels:
+        {{- include "africair.selector" (dict "root" . "component" "migrate") | nindent 8 }}
+    spec:
+      serviceAccountName: {{ include "africair.fullname" . }}-migrate
+      automountServiceAccountToken: false
+      restartPolicy: Never
+      securityContext: {{- include "africair.podSecurityContext" . | nindent 8 }}
+      containers:
+        - name: migrate
+          image: {{ include "africair.image" (dict "root" . "name" "africair-api") }}
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          command: ["node", "dist/migrate.js"]
+          env:
+            - name: DB_SSL
+              value: {{ .Values.api.env.DB_SSL | quote }}
+            - name: DATABASE_URL
+              valueFrom:
+                secretKeyRef: { name: {{ include "africair.fullname" . }}-db, key: DATABASE_URL }
+          securityContext: {{- include "africair.containerSecurityContext" . | nindent 12 }}
+          resources:
+            requests: { cpu: 50m, memory: 64Mi }
+            limits: { cpu: 250m, memory: 128Mi }
+{{- end }}

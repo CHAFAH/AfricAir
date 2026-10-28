@@ -1,0 +1,49 @@
+{
+  "$schema": "https://json-schema.org/draft-07/schema#",
+  "type": "object",
+  "required": ["image", "web", "api", "secrets"],
+  "properties": {
+    "image": {
+      "type": "object",
+      "properties": {
+        "registry": { "type": "string" },
+        "tag": { "type": "string", "pattern": "^$|^[A-Za-z0-9_][A-Za-z0-9_.-]{0,127}$" }
+      }
+    },
+    "api": {
+      "type": "object",
+      "properties": {
+        "replicas": { "type": "integer", "minimum": 1 },
+        "terminationGracePeriodSeconds": { "type": "integer", "minimum": 1 },
+        "env": {
+          "type": "object",
+          "additionalProperties": { "type": "string" },
+          "properties": {
+            "APP_ENV": { "type": "string", "minLength": 1 },
+            "ANNOUNCEMENT_LEVEL": { "enum": ["info", "warning", "critical"] },
+            "MAINTENANCE_MODE": { "enum": ["true", "false"] },
+            "SERVICE_FEE_USD": { "type": "string", "pattern": "^[0-9]+(\\.[0-9]+)?$" },
+            "DEFAULT_LANGUAGE": { "enum": ["", "en", "fr"] },
+            "DEFAULT_CURRENCY": { "type": "string", "pattern": "^$|^[A-Z]{3}$" },
+            "DB_SSL": { "enum": ["", "disable", "require", "verify"] },
+            "SHUTDOWN_DELAY_MS": { "type": "string", "pattern": "^[0-9]+$" }
+          }
+        }
+      }
+    },
+    "secrets": {
+      "type": "object",
+      "required": ["appSecretName", "dbParameterPrefix"],
+      "properties": {
+        "dbMasterSecretArn": { "type": "string", "pattern": "^$|^arn:aws[a-z-]*:secretsmanager:[a-z0-9-]+:[0-9]{12}:secret:.+-[A-Za-z0-9]{6}$" }
+      }
+    },
+    "ingress": {
+      "type": "object",
+      "properties": {
+        "className": { "type": "string" },
+        "deregistrationDelaySeconds": { "type": "integer", "minimum": 0, "maximum": 3600 }
+      }
+    }
+  }
+}

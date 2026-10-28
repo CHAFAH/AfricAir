@@ -1,0 +1,7 @@
+# hadolint configuration for Dockerfile.web and Dockerfile.api.
+failure-threshold: warning
+ignored:
+  # DL3006 "always tag the version of an image": every FROM uses a build arg (NODE_IMAGE, NGINX_IMAGE,
+  # RUNTIME_IMAGE) whose default is an exact tag, e.g. node:22.23.4-alpine. hadolint cannot resolve
+  # ARG values, so it reports these as untagged.
+  - DL3006

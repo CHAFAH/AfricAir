@@ -1,0 +1,61 @@
+# AppProjects first (wave -10): every other Application belongs to one of them.
+apiVersion: argoproj.io/v1alpha1
+kind: AppProject
+metadata:
+  name: africair
+  namespace: argocd
+  annotations:
+    argocd.argoproj.io/sync-wave: "-10"
+spec:
+  description: The AfricAir app in staging and production
+  sourceRepos:
+    - https://github.com/CHAFAH/AfricAir.git # your fork only
+  destinations:
+    - server: https://kubernetes.default.svc
+      namespace: africair-staging
+    - server: https://kubernetes.default.svc
+      namespace: africair-production
+  clusterResourceWhitelist:
+    - group: ""
+      kind: Namespace # CreateNamespace=true; nothing else cluster-scoped
+  namespaceResourceWhitelist:
+    - group: "*"
+      kind: "*"
+  syncWindows:
+    # No production syncs at weekends (Saturday 00:00 UTC for 48 h), manual syncs included.
+    - kind: deny
+      schedule: "0 0 * * 6"
+      duration: 48h
+      applications: [africair-production]
+      manualSync: false
+      timeZone: UTC
+  roles:
+    - name: deployer
+      description: Sync (not delete) the AfricAir apps; mapped to a GitHub team via Dex for the stretch goal
+      policies:
+        - p, proj:africair:deployer, applications, get, africair/*, allow
+        - p, proj:africair:deployer, applications, sync, africair/*, allow
+---
+apiVersion: argoproj.io/v1alpha1
+kind: AppProject
+metadata:
+  name: platform
+  namespace: argocd
+  annotations:
+    argocd.argoproj.io/sync-wave: "-10"
+spec:
+  description: Cluster add-ons managed by the platform team (Argo CD, ESO, LBC, Reloader, monitoring)
+  sourceRepos:
+    - https://github.com/CHAFAH/AfricAir.git
+    - https://argoproj.github.io/argo-helm
+    - https://charts.external-secrets.io
+    - https://aws.github.io/eks-charts
+    - https://stakater.github.io/stakater-charts
+    - https://prometheus-community.github.io/helm-charts
+  destinations:
+    - { server: https://kubernetes.default.svc, namespace: argocd }
+    - { server: https://kubernetes.default.svc, namespace: external-secrets }
+    - { server: https://kubernetes.default.svc, namespace: kube-system }
+    - { server: https://kubernetes.default.svc, namespace: monitoring }
+  clusterResourceWhitelist:
+    - { group: "*", kind: "*" } # CRDs, ClusterRoles, ClusterSecretStores, webhooks

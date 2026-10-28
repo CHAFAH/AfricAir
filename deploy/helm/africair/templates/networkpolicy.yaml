@@ -1,0 +1,116 @@
+{{- if .Values.networkPolicy.enabled }}
+{{- $np := .Values.networkPolicy }}
+# Default deny: nothing in or out of this namespace unless a policy below allows it.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: default-deny
+  labels: {{- include "africair.labels" . | nindent 4 }}
+spec:
+  podSelector: {}
+  policyTypes: [Ingress, Egress]
+---
+# Every pod may resolve names through CoreDNS.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-dns
+  labels: {{- include "africair.labels" . | nindent 4 }}
+spec:
+  podSelector: {}
+  policyTypes: [Egress]
+  egress:
+    - to:
+        - namespaceSelector:
+            matchLabels: { kubernetes.io/metadata.name: kube-system }
+          podSelector:
+            matchLabels: { k8s-app: kube-dns }
+      ports:
+        - { protocol: UDP, port: 53 }
+        - { protocol: TCP, port: 53 }
+---
+# web: from the ALB (target-type ip: the source is an ALB ENI address inside the VPC CIDR).
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: {{ include "africair.fullname" . }}-web
+  labels: {{- include "africair.labels" . | nindent 4 }}
+spec:
+  podSelector:
+    matchLabels: {{- include "africair.selector" (dict "root" . "component" "web") | nindent 6 }}
+  policyTypes: [Ingress, Egress]
+  ingress:
+    - from:
+        {{- range $np.albSourceCidrs }}
+        - ipBlock: { cidr: {{ . }} }
+        {{- end }}
+      ports:
+        - { protocol: TCP, port: 8080 }
+  egress:
+    - to:
+        - podSelector:
+            matchLabels: {{- include "africair.selector" (dict "root" . "component" "api") | nindent 14 }}
+      ports:
+        - { protocol: TCP, port: 4000 }
+---
+# api: 4000 from the ALB and from web; 9464 (metrics) from the monitoring namespace only.
+# Egress: RDS (5432 on the database subnets) and HTTPS.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: {{ include "africair.fullname" . }}-api
+  labels: {{- include "africair.labels" . | nindent 4 }}
+spec:
+  podSelector:
+    matchLabels: {{- include "africair.selector" (dict "root" . "component" "api") | nindent 6 }}
+  policyTypes: [Ingress, Egress]
+  ingress:
+    - from:
+        {{- range $np.albSourceCidrs }}
+        - ipBlock: { cidr: {{ . }} }
+        {{- end }}
+        - podSelector:
+            matchLabels: {{- include "africair.selector" (dict "root" . "component" "web") | nindent 14 }}
+      ports:
+        - { protocol: TCP, port: 4000 }
+    - from:
+        - namespaceSelector:
+            matchLabels: { kubernetes.io/metadata.name: {{ $np.monitoringNamespace }} }
+      ports:
+        - { protocol: TCP, port: 9464 }
+  egress:
+    - to:
+        {{- range $np.databaseCidrs }}
+        - ipBlock: { cidr: {{ . }} }
+        {{- end }}
+      ports:
+        - { protocol: TCP, port: 5432 }
+    - ports:
+        - { protocol: TCP, port: 443 }
+---
+# migrate and backup: the database; backup also needs S3 (443) and the Pod Identity agent.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: {{ include "africair.fullname" . }}-jobs
+  labels: {{- include "africair.labels" . | nindent 4 }}
+spec:
+  podSelector:
+    matchExpressions:
+      - { key: app.kubernetes.io/name, operator: In, values: [migrate, backup] }
+  policyTypes: [Ingress, Egress]
+  egress:
+    - to:
+        {{- range $np.databaseCidrs }}
+        - ipBlock: { cidr: {{ . }} }
+        {{- end }}
+      ports:
+        - { protocol: TCP, port: 5432 }
+    - ports:
+        - { protocol: TCP, port: 443 }
+    # EKS Pod Identity credentials endpoint (link-local, served by the eks-pod-identity-agent DaemonSet).
+    - to:
+        - ipBlock: { cidr: 169.254.170.23/32 }
+      ports:
+        - { protocol: TCP, port: 80 }
+{{- end }}

@@ -1,0 +1,12 @@
+[Unit]
+Description=AfricAir health check (reloads nginx after 3 consecutive failures)
+After=nginx.service
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/sbin/africair-healthcheck
+# Runs as root to reload nginx. "full" (not "strict"): `nginx -t` must open /var/log/nginx and /run/nginx.pid.
+NoNewPrivileges=yes
+ProtectSystem=full
+ProtectHome=yes
+PrivateTmp=yes

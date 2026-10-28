@@ -1,0 +1,93 @@
+# kube-prometheus-stack 92.14.1. Credentials (Grafana admin, the Alertmanager receivers) come from
+# ExternalSecrets in gitops/platform; nothing secret is in this file.
+
+crds:
+  enabled: true
+
+defaultRules:
+  create: true
+
+prometheus:
+  prometheusSpec:
+    retention: 7d
+    retentionSize: 18GB
+    # Select ServiceMonitors/PrometheusRules in every namespace, not only those carrying this Helm release's
+    # label. Without this the AfricAir ServiceMonitor (another release, another namespace) would be ignored.
+    serviceMonitorSelectorNilUsesHelmValues: false
+    podMonitorSelectorNilUsesHelmValues: false
+    ruleSelectorNilUsesHelmValues: false
+    resources:
+      requests: { cpu: 200m, memory: 1Gi }
+      limits: { memory: 2Gi }
+    storageSpec:
+      volumeClaimTemplate:
+        spec:
+          storageClassName: gp3
+          accessModes: [ReadWriteOnce]
+          resources: { requests: { storage: 20Gi } }
+    nodeSelector: { workload: platform }
+    tolerations:
+      - { key: dedicated, operator: Equal, value: platform, effect: NoSchedule }
+
+alertmanager:
+  alertmanagerSpec:
+    # alertmanager.yaml (routes, receivers, inhibition) is rendered by an ExternalSecret that injects the
+    # Slack webhook URL; see gitops/platform/templates/monitoring-secrets.yaml.
+    configSecret: alertmanager-africair
+    storage:
+      volumeClaimTemplate:
+        spec:
+          storageClassName: gp3
+          accessModes: [ReadWriteOnce]
+          resources: { requests: { storage: 2Gi } }
+    resources:
+      requests: { cpu: 20m, memory: 64Mi }
+      limits: { memory: 128Mi }
+    nodeSelector: { workload: platform }
+    tolerations:
+      - { key: dedicated, operator: Equal, value: platform, effect: NoSchedule }
+
+grafana:
+  admin:
+    existingSecret: grafana-admin        # from africair/platform/grafana
+    userKey: admin-user
+    passwordKey: admin-password
+  persistence:
+    enabled: true
+    storageClassName: gp3
+    size: 5Gi
+  sidecar:
+    dashboards:
+      enabled: true
+      label: grafana_dashboard
+      labelValue: "1"
+      searchNamespace: ALL
+  ingress:
+    enabled: true
+    ingressClassName: alb
+    hosts: [grafana.africair.example.com]
+    annotations:
+      alb.ingress.kubernetes.io/scheme: internet-facing
+      alb.ingress.kubernetes.io/target-type: ip
+      alb.ingress.kubernetes.io/group.name: africair
+      alb.ingress.kubernetes.io/listen-ports: '[{"HTTP": 80}, {"HTTPS": 443}]'
+      alb.ingress.kubernetes.io/ssl-redirect: "443"
+      alb.ingress.kubernetes.io/healthcheck-path: /api/health
+  nodeSelector: { workload: platform }
+  tolerations:
+    - { key: dedicated, operator: Equal, value: platform, effect: NoSchedule }
+
+prometheusOperator:
+  nodeSelector: { workload: platform }
+  tolerations:
+    - { key: dedicated, operator: Equal, value: platform, effect: NoSchedule }
+
+kube-state-metrics:
+  nodeSelector: { workload: platform }
+  tolerations:
+    - { key: dedicated, operator: Equal, value: platform, effect: NoSchedule }
+
+# node-exporter is a DaemonSet: it must run on every node, so it tolerates the taint and has no selector.
+prometheus-node-exporter:
+  tolerations:
+    - { key: dedicated, operator: Equal, value: platform, effect: NoSchedule }

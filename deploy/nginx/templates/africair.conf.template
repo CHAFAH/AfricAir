@@ -1,0 +1,77 @@
+# Rendered by the nginx image entrypoint (envsubst) to ${NGINX_ENVSUBST_OUTPUT_DIR}/africair.conf.
+# Only defined environment variables are substituted: API_UPSTREAM, APP_ENV, NGINX_LOCAL_RESOLVERS,
+# NGINX_ENVSUBST_OUTPUT_DIR. nginx variables ($uri, $upstream_addr...) are left alone.
+
+log_format africair_json escape=json
+  '{"time":"$time_iso8601","msec":"$msec","remote_addr":"$remote_addr",'
+  '"request_method":"$request_method","uri":"$request_uri","status":$status,'
+  '"body_bytes_sent":$body_bytes_sent,"request_time":$request_time,'
+  '"upstream_addr":"$upstream_addr","upstream_response_time":"$upstream_response_time",'
+  '"http_user_agent":"$http_user_agent","x_forwarded_for":"$http_x_forwarded_for"}';
+
+server {
+  listen 8080;
+  server_name _;
+  root /usr/share/nginx/html;
+  index index.html;
+  access_log /dev/stdout africair_json;
+
+  gzip on;
+  gzip_vary on;
+  gzip_proxied any;
+  gzip_comp_level 5;
+  gzip_min_length 256;
+  gzip_types application/javascript text/javascript text/css application/json image/svg+xml text/plain;
+
+  # Re-resolve the API name every 10 s through the container's DNS (127.0.0.11 under Docker,
+  # the cluster DNS in Kubernetes), so scaled replicas are picked up without restarting nginx.
+  resolver ${NGINX_LOCAL_RESOLVERS} valid=10s ipv6=off;
+
+  include ${NGINX_ENVSUBST_OUTPUT_DIR}/headers.inc;
+
+  location = /healthz {
+    access_log off;
+    default_type text/plain;
+    return 200 "ok\n";
+  }
+
+  location /assets/ {
+    include ${NGINX_ENVSUBST_OUTPUT_DIR}/headers.inc;
+    add_header Cache-Control "public, max-age=31536000, immutable" always;
+    try_files $uri =404;
+  }
+
+  location = /index.html {
+    include ${NGINX_ENVSUBST_OUTPUT_DIR}/headers.inc;
+    add_header Cache-Control "no-cache" always;
+  }
+
+  location = /version.json {
+    include ${NGINX_ENVSUBST_OUTPUT_DIR}/headers.inc;
+    add_header Cache-Control "no-cache" always;
+  }
+
+  location /api/ {
+    # A variable in proxy_pass forces a DNS lookup at request time (cached for `valid=10s`).
+    # A literal host name would be resolved once, at startup, and pinned to one replica's IP.
+    set $api_upstream ${API_UPSTREAM};
+    proxy_pass $api_upstream;
+    proxy_http_version 1.1;
+    proxy_set_header Connection "";
+    proxy_set_header Host $host;
+    proxy_set_header X-Real-IP $remote_addr;
+    proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+    proxy_set_header X-Forwarded-Proto $scheme;
+    proxy_connect_timeout 2s;
+    proxy_read_timeout 15s;
+    proxy_next_upstream error timeout http_502;
+    client_max_body_size 64k;
+    include ${NGINX_ENVSUBST_OUTPUT_DIR}/headers.inc;
+    add_header Cache-Control "no-store" always;
+    add_header X-Upstream $upstream_addr always;
+  }
+
+  location / {
+    try_files $uri $uri/ =404;
+  }
+}

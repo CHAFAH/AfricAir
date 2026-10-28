@@ -1,0 +1,72 @@
+# syntax=docker/dockerfile:1.10
+# AfricAir API: Node.js 22, non-root, app on 4000, Prometheus metrics on 9464.
+# The same image runs migrations: docker run africair-api node dist/migrate.js
+
+ARG NODE_IMAGE=node:22.23.4-alpine
+ARG RUNTIME_IMAGE=alpine:3.24.3
+
+# --- build: workspace dependencies (cached on the manifests), then compile the API ---------------
+FROM ${NODE_IMAGE} AS build
+WORKDIR /app
+ENV PNPM_HOME=/pnpm CI=true
+RUN corepack enable
+COPY package.json pnpm-lock.yaml pnpm-workspace.yaml ./
+COPY server/package.json server/
+RUN --mount=type=cache,id=pnpm-store,target=/pnpm/store \
+    pnpm config set store-dir /pnpm/store && pnpm install --frozen-lockfile
+# Only what the API needs: front-end changes (src/) do not invalidate anything below.
+COPY tsconfig.json vite.config.ts ./
+COPY server/ server/
+RUN pnpm build:api
+
+# --- test: API type check and the API tests (vitest picks up server/src/**/*.test.ts) -----------
+FROM build AS test
+RUN pnpm --filter @africair/api exec tsc -p tsconfig.json --noEmit && pnpm exec vitest run server/src
+
+# --- prod-deps: production-only node_modules for @africair/api (pg, prom-client) -----------------
+# Needs injectWorkspacePackages: true (pnpm-workspace.yaml). `pnpm deploy` packs like `npm pack`, which
+# skips git-ignored paths, so dist/ is copied in afterwards.
+FROM test AS prod-deps
+RUN --mount=type=cache,id=pnpm-store,target=/pnpm/store \
+    pnpm --filter @africair/api deploy --prod /out \
+ && rm -rf /out/src /out/tsconfig.json /out/.env.example \
+ && cp -R server/dist /out/dist
+
+# --- node: the official binary only --------------------------------------------------------------
+FROM ${NODE_IMAGE} AS node
+
+# --- runtime: plain Alpine (same release as the node image) + the node binary --------------------
+# Deleting npm/yarn/corepack in a RUN on top of node:alpine would only hide them behind whiteouts;
+# copying just the binary actually removes ~25 MB and the CVEs that come with npm's bundled packages.
+FROM ${RUNTIME_IMAGE} AS runtime
+# Not pinned: Alpine drops superseded package versions from its mirrors, so exact pins break rebuilds.
+# The Alpine release itself is pinned through RUNTIME_IMAGE.
+# hadolint ignore=DL3018
+RUN apk add --no-cache libstdc++ libgcc \
+ && addgroup -g 1000 node \
+ && adduser -u 1000 -G node -s /sbin/nologin -D -H node
+COPY --from=node /usr/local/bin/node /usr/local/bin/node
+ARG VERSION=dev
+ARG GIT_SHA=unknown
+ARG BUILD_DATE=unknown
+LABEL org.opencontainers.image.title="africair-api" \
+      org.opencontainers.image.description="AfricAir runtime-config, bookings and admin API" \
+      org.opencontainers.image.source="https://github.com/CHAFAH/AfricAir" \
+      org.opencontainers.image.version="${VERSION}" \
+      org.opencontainers.image.revision="${GIT_SHA}" \
+      org.opencontainers.image.created="${BUILD_DATE}"
+
+WORKDIR /app
+# Owned by root and not writable by the `node` user: the process cannot modify its own code.
+COPY --from=prod-deps /out/ ./
+ENV NODE_ENV=production \
+    PORT=4000 \
+    METRICS_PORT=9464 \
+    APP_VERSION=${VERSION} \
+    GIT_SHA=${GIT_SHA}
+USER node
+EXPOSE 4000 9464
+HEALTHCHECK --interval=15s --timeout=3s --start-period=10s --retries=3 \
+  CMD wget -q -O /dev/null http://127.0.0.1:4000/api/healthz || exit 1
+# Node as PID 1 receives SIGTERM directly and runs the graceful shutdown (see drill 6).
+CMD ["node", "dist/index.js"]

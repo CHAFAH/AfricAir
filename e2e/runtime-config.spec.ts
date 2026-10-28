@@ -67,7 +67,8 @@ test('environment variables change branding, banners, defaults and features', as
   await expect(page.getByTestId('announcement')).toContainText('Scheduled maintenance tonight')
   await expect(page.getByRole('heading', { level: 1 })).toContainText('Chaque voyage') // DEFAULT_LANGUAGE=fr
   await expect(page.getByLabel('Devise')).toHaveValue('EUR') // DEFAULT_CURRENCY=EUR
-  await expect(page.locator('a[href="mailto:help@skybridge.test"]').first()).toBeVisible()
+  // SUPPORT_EMAIL drives the help link. On mobile it sits in the collapsed menu, so check presence, not visibility.
+  await expect(page.locator('a[href="mailto:help@skybridge.test"]').first()).toBeAttached()
   await expect(page.getByRole('button', { name: 'Destinations' })).toHaveCount(0) // FEATURE_DESTINATIONS=false
   await page.goto('/#/destinations')
   await expect(page.getByText('Page introuvable')).toBeVisible()

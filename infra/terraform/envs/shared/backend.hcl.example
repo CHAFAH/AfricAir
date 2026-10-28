@@ -1,0 +1,2 @@
+# terraform init -backend-config=backend.hcl
+bucket = "africair-tfstate-123456789012" # output of infra/terraform/bootstrap

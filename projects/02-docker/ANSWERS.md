@@ -1,0 +1,199 @@
+# Project 2 — Answers
+
+How-to: [`docs/docker.md`](../../docs/docker.md). ECR repositories (scan on push, immutable tags,
+lifecycle: keep 10 tagged, expire untagged after 1 day) are created by Terraform in
+`infra/terraform/envs/shared`.
+
+> **Evidence status.** Everything below was run locally on Docker 28.5 (Docker Desktop, arm64,
+> containerd image store). Not done here, because it needs your accounts: the Docker Hub and ECR
+> pushes, the amd64 run on EC2, and the browser screenshots. The commands are in `docs/docker.md`.
+
+## Changes made to the app while containerising it
+
+| Change | Why |
+|---|---|
+| `pnpm-workspace.yaml`: `injectWorkspacePackages: true` (lockfile updated) | `pnpm deploy --prod` otherwise needs `--legacy`, which copied the workspace root's React and jsPDF into the API bundle (90 MB). Now only `pg` and `prom-client` (6 MB). |
+| `server/src/config.ts`: file secrets compared by **content**, not mtime | The rotation test failed intermittently in `docker build` (`expected 'first-token' to be 'rotated-token'`): two writes within the filesystem's mtime resolution looked unchanged, so a real rotation could be missed. Now 5/5 local runs and every image build pass. |
+| `e2e/runtime-config.spec.ts`: help link `toBeAttached()` instead of `toBeVisible()` | It failed on the `mobile` project even against plain `vite preview` (no nginx): on phones the link is inside the collapsed menu. The test checks that `SUPPORT_EMAIL` drives the link. |
+
+## Results
+
+```text
+$ curl -fsS localhost:8080/healthz
+ok
+$ curl -s localhost:8080/api/config | jq '{appEnv, brandName, storage, secrets: (.secrets | map_values(.source? // .status))}'
+{"appEnv":"staging","brandName":"AfricAir Staging","storage":"database",
+ "secrets":{"database":"file","adminToken":"file","promoCodes":"file"}}
+$ curl -sI localhost:8080/ | grep -i x-environment
+X-Environment: staging
+$ for i in $(seq 8); do curl -sI localhost:8080/api/config | grep -i x-upstream; done | sort | uniq -c
+   4 X-Upstream: 172.20.0.3:4000
+   4 X-Upstream: 172.20.0.4:4000
+$ docker compose exec api sh -c 'id -u; env' | grep -Ei 'token|password|promo'
+1000
+ADMIN_TOKEN_FILE=/run/secrets/admin_token
+PROMO_CODES_FILE=/run/secrets/promo_codes
+$ docker image inspect africair-web:local africair-api:local --format '{{.Config.User}} {{.Size}}'
+101 33887305
+node 54375024
+$ docker compose --profile test up --build --exit-code-from e2e; echo $?
+e2e-1  |   26 passed (14.9s)
+0
+$ trivy image --severity HIGH,CRITICAL --exit-code 1 africair-web:local; echo $?   → 0
+$ trivy image --severity HIGH,CRITICAL --exit-code 1 africair-api:local; echo $?   → 0
+$ hadolint Dockerfile.web Dockerfile.api                                          → clean
+```
+
+### Task 5: visible environment and secret checks
+
+Checked through the API. Browser screenshots are still to be captured.
+
+| # | Check | Result |
+|---|---|---|
+| 1 | Banner, brand, NGN, $5 fee | `/api/config`: `appEnv: staging`, `brandName: AfricAir Staging`, `defaultCurrency: NGN`, `serviceFeeUsd: 5`, warning announcement |
+| 2 | `/#/status` | storage `database`, all three secrets `source: file` |
+| 3 | Promo + admin | `POST /api/promo/validate {"code":"SAVE10"}` → `{"valid":true,"code":"SAVE10","percent":10}`; `GET /api/admin/bookings` with the token → 200 |
+| 4 | Maintenance | `MAINTENANCE_MODE=true` in `config/staging.env`; `docker compose restart api` → still `false`; `docker compose up -d api` → `true` |
+| 5 | Live rotation | New `secrets/admin_token` written with `printf`; the fingerprint changed (`7862cf6f` → `05942e46`) with **no restart**; old token → `{"error":"invalid admin token"}`, new → 200 |
+| 6 | DB down | `docker compose stop db` → `/api/readyz` **503** `{"status":"not-ready","db":"error"}`; `docker compose start db` → 200 again, `api` not restarted |
+| 7 | No values in env | see `env` output above: only `*_FILE` paths |
+
+**Why `restart` is not enough (4).** `docker compose restart` stops and starts the *same container*,
+whose environment was fixed when it was created. `env_file` is read by Compose when it creates a
+container, so you need `up -d`: Compose sees the config changed and recreates `api` with the new
+environment.
+
+**Why `_FILE` secrets are safer (7).** An environment variable is copied into every place that
+records a process or container description:
+
+- `docker inspect` (`Config.Env`) and `docker compose config`, readable by anyone with Docker access;
+- `/proc/<pid>/environ`, inherited by every child process;
+- crash dumps, error reporters and debug endpoints that print `process.env`, and logs that echo the
+  start command.
+
+A file at `/run/secrets/x` is only a path in those places. The value stays in a tmpfs or bind mount,
+readable by the process (and whoever can exec into the container). It can also be rotated in place,
+which an env var can't.
+
+### Task 6: read-only root cause
+
+The stock entrypoint (`20-envsubst-on-templates.sh`) renders `/etc/nginx/templates/*.template` into
+`/etc/nginx/conf.d`, which is on the image's root filesystem. Reproduced by pointing the output back
+at the stock location:
+
+```text
+$ docker run --read-only --tmpfs /tmp -e NGINX_ENVSUBST_OUTPUT_DIR=/etc/nginx/conf.d africair-web:local
+20-envsubst-on-templates.sh: Running envsubst on /etc/nginx/templates/africair.conf.template to /etc/nginx/conf.d/africair.conf
+/docker-entrypoint.d/20-envsubst-on-templates.sh: line 53: can't create /etc/nginx/conf.d/africair.conf: Read-only file system
+state: exited exit=1
+```
+
+The `10-listen-on-ipv6-by-default.sh` script would also edit `conf.d/default.conf` in place.
+
+The fix, with the root filesystem kept read-only:
+
+- `NGINX_ENVSUBST_OUTPUT_DIR=/tmp/nginx-conf` (tmpfs). A tiny `05-prepare-tmp.sh` creates that
+  directory first, because the envsubst script skips an output directory that doesn't exist.
+- Our own `nginx.conf` includes `/tmp/nginx-conf/*.conf`, and keeps its pid and temp paths in `/tmp`.
+- The stock `default.conf` is deleted at build time, so the IPv6 script has nothing to edit.
+
+Verified:
+
+```text
+$ docker run -d --read-only --tmpfs /tmp --cap-drop ALL --security-opt no-new-privileges \
+    --memory 128m --cpus 0.5 --pids-limit 100 -e APP_ENV=hardened africair-web:local
+web: ok running X-Environment=hardened     api: {"status":"ok"} running
+```
+
+### Task 7: size, layers and cache
+
+| Image | `inspect .Size` (compressed) | Unpacked | Three biggest layers |
+|---|---|---|---|
+| web | 33.9 MB | ~58 MB, mostly the nginx-unprivileged base | base Alpine + nginx (incl. njs) · `apk upgrade` (security fixes) · `COPY dist` 1.5 MB |
+| api | 54.4 MB | ~146 MB | **node binary 126 MB** · `COPY /out` (dist + pg + prom-client) 7.1 MB · libstdc++/libgcc 3.1 MB |
+
+With the containerd image store, `docker image inspect .Size` is the compressed content size, which
+is what a registry stores and what `docker pull` downloads. Both images are under target there. The
+unpacked API image is bigger than 120 MB because a full Node 22 binary is 126 MB on its own.
+
+The runtime stage is therefore plain `alpine:3.24.3` plus the node binary copied from the official
+image. Before that it was `node:22-alpine` with a `RUN rm -rf npm yarn corepack` layer, which *hides*
+files behind whiteouts without removing them: 243 MB on disk then, 200 MB now. It also leaves npm's
+bundled dependencies, usually the main source of CVEs, out of the image. To go further you'd need a
+Node build without full ICU, or a single-executable bundle.
+
+Cache, with the build output paired per step:
+
+```text
+== web after a one-line change in src/components/Home.tsx
+CACHED [deps 6/6] RUN … pnpm install --frozen-lockfile
+RAN    [test 1/2] COPY . .          RAN [test 2/2] pnpm check && pnpm test     RAN [build] pnpm build
+== api after the same change: every step CACHED (the API build never copies src/)
+== web after a change in server/src/app.ts
+CACHED deps · RAN test + build · CACHED [runtime] COPY dist (the bundle is byte-identical)
+== api after the same change
+CACHED [build 6/9] pnpm install · RAN [build 8/9] COPY server/ · RAN build:api · RAN test · RAN COPY /out
+```
+
+### Task 8: SBOM
+
+`trivy image --format cyclonedx`: **web 71 components** (70 apk, 0 npm); **api 38** (18 apk, 19 npm).
+The web image has more packages because it inherits a general-purpose nginx image (nginx modules,
+curl, openssl, pcre, brotli, libxml…), while the API image starts from a minimal Alpine with only
+what Node needs. Its npm packages are `pg` and `prom-client` plus their dependencies, and nothing
+from the front end.
+
+### Task 9: tags
+
+`<git-sha>` is the immutable identity of a build. `1.0.0` is a release label added to the **same
+digest** (`docker buildx imagetools create -t …:1.0.0 …:<sha>`, or the ECR `put-image` re-tag used
+in Project 3). `latest` is never deployed: it moves, so a manifest saying `latest` doesn't say what
+runs, rollbacks can't be expressed, and immutable ECR tags reject a second push to it anyway.
+
+## Debugging drills
+
+| # | Symptom → cause → fix |
+|---|---|
+| 1 | **403 on every page.** `COPY` keeps the build stage's permissions; files created `0600` (or with a restrictive umask) as root can't be read by nginx's UID 101. Fix: make them world-readable (`chmod -R a+rX` in the build stage, or `COPY --chmod=0644`/`--chown=101`), never run nginx as root. |
+| 2 | **Exit right after `listen 80`.** `bind() to 0.0.0.0:80 failed (13: Permission denied)`: ports below 1024 need `CAP_NET_BIND_SERVICE`, which a non-root user (and `--cap-drop ALL`) doesn't have. Fix: keep 8080 in the container and map `-p 80:8080` (or let the Ingress do it). |
+| 3 | **`relation "bookings" does not exist`.** `depends_on` without a condition only waits for the migrate container to *start*. Fix (in `compose.yaml`): `api` depends on `migrate: service_completed_successfully`, which depends on `db: service_healthy`. |
+| 4 | **`exec format error` on EC2.** An image built on an arm64 Mac contains arm64 binaries. Fix: `docker buildx build --platform linux/amd64,linux/arm64 --push` (a multi-arch manifest list), and check it with `docker buildx imagetools inspect`. |
+| 5 | **502 right after `--scale api=3`.** With a literal `proxy_pass http://api:4000`, nginx resolves `api` once at startup and keeps those IPs, so new replicas are never used and removed ones give 502s. Fix: `resolver ${NGINX_LOCAL_RESOLVERS} valid=10s` (127.0.0.11 under Docker), plus a variable in `proxy_pass` (`set $api_upstream …; proxy_pass $api_upstream;`). A variable forces nginx to resolve at request time through the resolver, honouring `valid=10s`. `proxy_next_upstream error timeout http_502` retries a replica that just went away. |
+| 6 | **`docker stop` takes 10 s, no "shutdown requested".** With `CMD ["pnpm","start"]`, pnpm is PID 1. PID 1 gets no default signal handlers from the kernel, pnpm doesn't forward SIGTERM to `node`, so Docker waits out its timeout and SIGKILLs. With `CMD ["node","dist/index.js"]` Node is PID 1 and handles SIGTERM itself. `docker run --init` puts tini in as PID 1 to forward signals and reap zombies. Measured here with `docker stop -t 20`: `shutdown requested` → `shutdown complete` after **5 s** (`SHUTDOWN_DELAY_MS`), exit 0. Note: this machine's Docker Desktop gives every container a 1 s `StopTimeout` (plain `alpine` too), which SIGKILLs at 1 s; `compose.yaml` sets `stop_grace_period: 20s` for the API. |
+| 7 | **`password authentication failed`.** Measured: Postgres strips a trailing `\n` and even `\r\n` from `POSTGRES_PASSWORD_FILE` (its entrypoint reads `$(< file)`, then initdb reads the password as a line), and the API trims secret files. So `echo` vs `printf` doesn't break *this* stack. It does break wherever nothing trims: `echo pw \| base64` in a Kubernetes Secret consumed through `PGPASSWORD` by `pg_dump`/`psql` (the Project 4 backup job), or a password concatenated into a URL by a heredoc. Use `printf '%s'` everywhere (`scripts/docker/make-secrets.sh` does). |
+
+## Knowledge check
+
+**1. `CMD` vs `ENTRYPOINT`.** The container runs `ENTRYPOINT` with `CMD` as its arguments. The nginx
+image has `ENTRYPOINT ["/docker-entrypoint.sh"]` and `CMD ["nginx","-g","daemon off;"]`: the script
+runs everything in `/docker-entrypoint.d/` (including our `05-prepare-tmp.sh`, then envsubst and
+resolver detection), and finally `exec "$@"`, so nginx replaces the shell as PID 1 and receives
+signals. Overriding `CMD` keeps the setup; overriding `ENTRYPOINT` skips it.
+
+**2. Lockfiles first; cache mounts.** Each instruction's cache key depends on its inputs. Copying only
+the manifests before `pnpm install` means the expensive install layer is reused until a manifest or
+the lockfile changes, whereas `COPY . .` first would reinstall on every source edit. A cache mount
+(`--mount=type=cache,target=/pnpm/store`) is a directory BuildKit keeps *between builds*, outside any
+layer. It speeds up the install even when the layer has to rebuild, and it never ends up in the image.
+A layer is part of the image and is reused only on an exact cache-key match.
+
+**3. Three ways an env-var secret leaks:** `docker inspect`/`compose config`; `/proc/<pid>/environ`
+and every child process; crash dumps, error reporters and debug output that print the environment.
+
+**4. `depends_on` conditions.** By default `depends_on` only orders *container start*: the dependency
+has been started, not that it's ready. `service_healthy` waits until the dependency's healthcheck
+reports healthy (Postgres accepting connections). `service_completed_successfully` waits until a
+one-shot container has **exited with code 0** (migrations applied). A non-zero exit blocks the
+dependent service.
+
+**5. Metrics on a separate port.** The public port is exposed through nginx/the Ingress; 9464 isn't,
+so metrics (which reveal routes, versions, traffic and business volumes) are never public. They can be
+firewalled separately (NetworkPolicy: only the `monitoring` namespace), scraping can't be slowed by
+public traffic (or the other way round), and the app's routing and auth don't need a special case.
+
+**6. Migrations as a one-shot job.** Schema changes are a single-writer operation. Running them once,
+before the new version starts, gives one clear success or failure, which gates the rollout (`api`
+won't start if `migrate` fails). With `MIGRATE_ON_START=true` in 5 replicas, all five race at boot.
+The advisory lock in `migrate.ts` serialises them, so the schema isn't corrupted, but four replicas
+block on the lock, startup and readiness are delayed, a failing migration crash-loops every replica
+instead of failing one job, and the app's database role needs DDL rights at runtime.

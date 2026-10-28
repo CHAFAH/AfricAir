@@ -1,0 +1,15 @@
+region: eu-west-1
+
+# Secrets Manager JSON documents (values written with the CLI; see docs/runbook.md "Platform secrets"):
+#   africair/platform/argocd        {"adminPasswordBcrypt": "$2a$10$...", "adminPasswordMtime": "2026-10-28T00:00:00Z", "slackToken": "xoxb-..."}
+#   africair/platform/grafana       {"adminUser": "admin", "adminPassword": "..."}
+#   africair/platform/alertmanager  {"slackWebhookUrl": "https://hooks.slack.com/...", "pageWebhookUrl": "https://hooks.slack.com/...", "deadmansSwitchUrl": "https://hc-ping.com/<uuid>"}
+secrets:
+  argocd: africair/platform/argocd
+  grafana: africair/platform/grafana
+  alertmanager: africair/platform/alertmanager
+  refreshInterval: 5m
+
+alertmanager:
+  chatChannel: "#africair-alerts"
+  pageChannel: "#africair-oncall"

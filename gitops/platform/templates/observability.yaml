@@ -1,0 +1,25 @@
+# Dashboards: one ConfigMap per JSON file; the Grafana sidecar loads every ConfigMap labelled grafana_dashboard=1.
+{{- range $path, $_ := .Files.Glob "grafana-dashboards/*.json" }}
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: grafana-dashboard-{{ base $path | trimSuffix ".json" }}
+  namespace: monitoring
+  labels:
+    grafana_dashboard: "1"
+data:
+  {{ base $path }}: |-
+{{ $.Files.Get $path | indent 4 }}
+---
+{{- end }}
+# Alert and recording rules: the same file promtool tests (alerts/africair.rules.yaml).
+{{- range $path, $_ := .Files.Glob "alerts/*.rules.yaml" }}
+apiVersion: monitoring.coreos.com/v1
+kind: PrometheusRule
+metadata:
+  name: {{ base $path | trimSuffix ".rules.yaml" }}
+  namespace: monitoring
+spec:
+{{ $.Files.Get $path | indent 2 }}
+---
+{{- end }}

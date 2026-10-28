@@ -1,0 +1,36 @@
+{{- $root := . }}
+{{- range $c := list "web" "api" }}
+{{- if $root.Values.autoscaling.enabled }}
+apiVersion: autoscaling/v2
+kind: HorizontalPodAutoscaler
+metadata:
+  name: {{ include "africair.fullname" $root }}-{{ $c }}
+  labels: {{- include "africair.labels" $root | nindent 4 }}
+spec:
+  scaleTargetRef:
+    apiVersion: apps/v1
+    kind: Deployment
+    name: {{ include "africair.fullname" $root }}-{{ $c }}
+  minReplicas: {{ $root.Values.autoscaling.minReplicas }}
+  maxReplicas: {{ $root.Values.autoscaling.maxReplicas }}
+  metrics:
+    - type: Resource
+      resource:
+        name: cpu
+        target:
+          type: Utilization
+          # A percentage of the CPU *request*: without requests the HPA shows <unknown>.
+          averageUtilization: {{ $root.Values.autoscaling.targetCPUUtilizationPercentage }}
+---
+{{- end }}
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: {{ include "africair.fullname" $root }}-{{ $c }}
+  labels: {{- include "africair.labels" $root | nindent 4 }}
+spec:
+  minAvailable: {{ $root.Values.podDisruptionBudget.minAvailable }}
+  selector:
+    matchLabels: {{- include "africair.selector" (dict "root" $root "component" $c) | nindent 6 }}
+---
+{{- end }}

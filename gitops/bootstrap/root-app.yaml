@@ -1,0 +1,23 @@
+# The only Application applied by hand (after Terraform installed Argo CD):
+#   kubectl apply -n argocd -f gitops/bootstrap/root-app.yaml
+# Everything else is in gitops/apps and is created by this app (app-of-apps).
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: root
+  namespace: argocd
+  finalizers:
+    - resources-finalizer.argocd.argoproj.io # deleting root cascades to every app (make destroy)
+spec:
+  project: default
+  source:
+    repoURL: https://github.com/CHAFAH/AfricAir.git
+    targetRevision: main
+    path: gitops/apps
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: argocd
+  syncPolicy:
+    automated:
+      prune: true
+      selfHeal: true

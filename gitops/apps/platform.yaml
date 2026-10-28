@@ -1,0 +1,22 @@
+# gitops/platform: ClusterSecretStores (wave -2), ExternalSecrets for Argo CD, Grafana and Alertmanager
+# (wave -1), Grafana dashboards and Prometheus alert rules. A small Helm chart, so that the alert rules
+# stay a plain Prometheus rules file that `promtool test rules` can test directly.
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: platform
+  namespace: argocd
+  annotations:
+    argocd.argoproj.io/sync-wave: "-3"
+spec:
+  project: platform
+  source:
+    repoURL: https://github.com/CHAFAH/AfricAir.git
+    targetRevision: main
+    path: gitops/platform
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: monitoring
+  syncPolicy:
+    automated: { prune: true, selfHeal: true }
+    syncOptions: [CreateNamespace=true, ServerSideApply=true]

@@ -1,0 +1,103 @@
+# Argo CD (chart argo-cd 10.11.6). Used twice: by Terraform for the one-time bootstrap install, and by
+# gitops/apps/argocd.yaml, through which Argo CD manages itself afterwards.
+
+global:
+  domain: argocd.africair.example.com   # your domain; without one, use port-forward (docs/runbook.md)
+  nodeSelector: { workload: platform }
+  tolerations:
+    - { key: dedicated, operator: Equal, value: platform, effect: NoSchedule }
+
+configs:
+  params:
+    server.insecure: true            # TLS ends at the ALB; ALB → pod is plain HTTP inside the VPC
+  secret:
+    # The chart creates argocd-secret (Argo CD must start before it can deploy ESO's ExternalSecrets).
+    # An ExternalSecret with creationPolicy: Merge (gitops/platform) then adds admin.password, a bcrypt
+    # HASH from africair/platform/argocd, and admin.passwordMtime. With server-side apply each writer owns
+    # only its own keys; server.secretkey, which Argo CD generates, is left alone.
+    createSecret: true
+  cm:
+    admin.enabled: true
+    exec.enabled: false
+    statusbadge.enabled: true
+    # An ExternalSecret that is not Ready makes its Application Degraded (instead of "Healthy" by default).
+    resource.customizations.health.external-secrets.io_ExternalSecret: |
+      hs = {}
+      if obj.status ~= nil and obj.status.conditions ~= nil then
+        for _, c in ipairs(obj.status.conditions) do
+          if c.type == "Ready" and c.status == "True" then
+            hs.status = "Healthy"
+            hs.message = c.message
+            return hs
+          end
+          if c.type == "Ready" and c.status == "False" then
+            hs.status = "Degraded"
+            hs.message = c.reason .. ": " .. (c.message or "")
+            return hs
+          end
+        end
+      end
+      hs.status = "Progressing"
+      hs.message = "Waiting for the ExternalSecret to sync"
+      return hs
+  rbac:
+    policy.default: role:readonly
+    policy.csv: |
+      # deployer: see and sync the AfricAir apps, never delete them or touch the platform project
+      p, role:deployer, applications, get, africair/*, allow
+      p, role:deployer, applications, sync, africair/*, allow
+      p, role:deployer, applications, action/*, africair/*, allow
+      p, role:deployer, logs, get, africair/*, allow
+      g, africair:deployers, role:deployer
+    scopes: "[groups, email]"
+
+dex:
+  enabled: false   # stretch: GitHub SSO (dex.config with a GitHub connector) mapped to role:deployer
+
+server:
+  replicas: 1
+  ingress:
+    enabled: true
+    controller: aws
+    ingressClassName: alb
+    hostname: argocd.africair.example.com
+    annotations:
+      alb.ingress.kubernetes.io/scheme: internet-facing
+      alb.ingress.kubernetes.io/target-type: ip
+      alb.ingress.kubernetes.io/group.name: africair       # the app's ALB, one more host rule
+      alb.ingress.kubernetes.io/listen-ports: '[{"HTTP": 80}, {"HTTPS": 443}]'
+      alb.ingress.kubernetes.io/ssl-redirect: "443"
+      alb.ingress.kubernetes.io/backend-protocol: HTTP
+      alb.ingress.kubernetes.io/healthcheck-path: /healthz
+    aws:
+      serviceType: ClusterIP
+      backendProtocolVersion: HTTP1
+
+repoServer:
+  replicas: 1
+
+applicationSet:
+  replicas: 1
+
+notifications:
+  enabled: true
+  secret:
+    create: true     # an ExternalSecret merges slack-token into argocd-notifications-secret
+  notifiers:
+    service.slack: |
+      token: $slack-token
+  # Subscriptions are set per Application with annotations (apps/africair-*.yaml).
+  templates:
+    template.app-sync-failed: |
+      message: |
+        :x: {{.app.metadata.name}} sync failed at {{.app.status.operationState.finishedAt}}: {{.app.status.operationState.message}}
+    template.app-health-degraded: |
+      message: |
+        :warning: {{.app.metadata.name}} is {{.app.status.health.status}} (revision {{.app.status.sync.revision}})
+  triggers:
+    trigger.on-sync-failed: |
+      - when: app.status.operationState != nil and app.status.operationState.phase in ['Error', 'Failed']
+        send: [app-sync-failed]
+    trigger.on-health-degraded: |
+      - when: app.status.health.status == 'Degraded'
+        send: [app-health-degraded]

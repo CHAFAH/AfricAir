@@ -1,0 +1,138 @@
+# Project 5 — Answers
+
+| Deliverable | Where |
+|---|---|
+| Root app (applied by hand) | `gitops/bootstrap/root-app.yaml` |
+| Applications | `gitops/apps/`: `projects.yaml` (AppProjects `africair` + `platform`), `argocd.yaml` (self-managed), `controllers.yaml` (ESO, LBC, Reloader), `platform.yaml`, `monitoring.yaml`, `africair-staging.yaml`, `africair-production.yaml` |
+| Values | `gitops/values/`: `argocd.yaml` (RBAC, health check, notifications, Ingress), `monitoring.yaml`, `aws-load-balancer-controller.yaml`, `africair-staging.yaml`, `africair-production.yaml` |
+| Platform config | `gitops/platform/`, a small Helm chart: ClusterSecretStores (wave -2), ExternalSecrets for Argo CD, Grafana and Alertmanager (wave -1), the dashboard ConfigMap and the PrometheusRule (both rendered from plain files) |
+| Dashboard as code | `gitops/platform/grafana-dashboards/africair-overview.json` |
+| Alerts + tests | `gitops/platform/alerts/africair.rules.yaml`, `alerts/tests/africair_test.yaml` (run in CI: the `manifests` job) |
+| Chart changes | `deploy/helm/africair`: ServiceMonitor, metrics port, NetworkPolicy 9464 from `monitoring` only, GitOps ordering (`gitops.enabled`) |
+| Terraform | `envs/staging`: `enable_platform_node_group` (tainted `platform` group), `enable_argocd` (bootstrap `helm_release`), secret containers for `africair/platform/{argocd,grafana,alertmanager}` and `africair/production/app` |
+| Runbook per alert | `docs/runbook.md#alerts` (each alert's `runbook_url` points to its anchor) |
+
+> **Evidence status.** Verified locally:
+> - `promtool test rules`: **SUCCESS**, 10 test cases (fire and no-fire) covering all 8 required
+>   alerts plus the SLO burn; `promtool check rules`: 14 rules;
+> - the rendered Alertmanager config passes `amtool check-config`, and `amtool config routes test`
+>   routes critical → `page`, warning → `chat`, Watchdog → `deadmans-switch`;
+> - `helm lint` and `kubeconform -strict` pass on the platform chart, both app value files and every
+>   Application and AppProject (CRD schemas);
+> - the dashboard JSON parses.
+>
+> Screenshots, drills and the 10-minute demo need the running cluster.
+
+## Design decisions
+
+- **Platform nodes:** a second node group `platform` (t3.large, label `workload=platform`, taint
+  `dedicated=platform:NoSchedule`), with Argo CD and monitoring scheduled on it through
+  `nodeSelector` + tolerations.
+  - Pros: isolation. Prometheus memory spikes can't evict the app, app load can't starve Argo CD, and
+    each pool can be sized and scaled for its workload.
+  - Cons: more nodes ($), lower bin-packing efficiency, and DaemonSets (node-exporter) must tolerate
+    the taint.
+- **Argo CD self-management:** Terraform runs `helm_release "argocd"` once with `ignore_changes = all`.
+  `apps/argocd.yaml` uses the same release name and the same values file, so Argo CD adopts the
+  release.
+- **Controller hand-over** (ESO, LBC, Reloader): sync the Applications (same release names, so the
+  releases are adopted), `terraform state rm` the `helm_release`s, then set
+  `install_controllers_with_terraform = false`. IAM roles and Pod Identity associations stay in
+  Terraform: AWS identity is infrastructure, while what runs in the cluster belongs to Git.
+- **Admin password:** Secrets Manager stores a **bcrypt hash**, merged into the chart-created
+  `argocd-secret` (`creationPolicy: Merge`). ESO *could* hash in a template, but bcrypt salts every
+  call, so each refresh would produce a new hash: Argo CD would see a password change and log everyone
+  out every 5 minutes. Delete `argocd-initial-admin-secret` after the first login.
+- **Ordering:** wave −10 AppProjects → −5 Argo CD → −4 controllers → −3 platform (stores −2,
+  ExternalSecrets −1 inside it) → −2 monitoring → apps. Inside the app chart in GitOps mode:
+  ExternalSecrets wave −1 → migration Job (`hook: Sync`, wave 0) → Deployments wave 1. The spec's
+  *PreSync* migration can't work, because Argo CD finishes the whole PreSync phase before the Sync
+  phase starts wave −1, so the Job would start before its database Secret exists.
+- **Alert rules as a plain file + a chart wrapper:** `promtool` needs Prometheus rule-file format,
+  while the operator needs a `PrometheusRule`. `gitops/platform/templates/observability.yaml` wraps the
+  tested file, so there's one source of truth.
+- **Production:** chart pinned to a tag (`targetRevision: v1.0.0`), values from `main`, manual sync,
+  the `deny` sync window on weekends, `APP_ENV=production` (no banner), USD, $15, its own
+  `africair/production/app` secret. In this bootcamp setup it shares the staging RDS. A real
+  production gets its own Terraform root and database.
+- **Deploy annotation:** `changes(africair_build_info[5m]) > 0` never fires, because a new version is a
+  *new series* (new label values), not a changed value. The dashboard instead annotates series that
+  exist now but didn't 5 minutes ago:
+  `sum by (namespace,version,commit)(africair_build_info) unless sum by (…)(africair_build_info offset 5m)`.
+- **AfricairNoBookings:** labelled counters have no series before the first booking, so a naive
+  `increase(...) == 0` returns nothing and never fires. The rule adds `or build_info * 0` to treat
+  "no series" as 0. The unit test covers exactly that case.
+- **ServiceMonitor relabelling** adds `app_env` and `namespace` target labels. `africair_build_info`
+  already has an `app_env` metric label, which Prometheus keeps as `exported_app_env` (the same value).
+
+## Drills (expected results; capture on the cluster)
+
+| # | Drill | Expected |
+|---|---|---|
+| 1 | `kubectl scale deploy/africair-web --replicas=5` | OutOfSync, then self-heal back to Git. (The HPA owns `spec.replicas`, which the Applications ignore. Patch something else, for example a ConfigMap value, or scale `web` with the HPA disabled, to see self-heal clearly.) |
+| 2 | Commit an `ANNOUNCEMENT_TEXT` change | Auto-sync (Argo polls every 3 min; a GitHub webhook makes it seconds); the checksum rolls the pods; the banner appears. Measure commit → visible: typically 1–4 min. |
+| 3 | Commit `MAINTENANCE_MODE: "true"` | Booking blocked; the dashboard's maintenance panel turns orange; `AfricairMaintenanceModeOn` fires only for `app_env="production"`, 15 min after promotion. |
+| 4 | Promote: move `targetRevision` and `image.tag`, then `argocd app sync africair-production` | No banner, USD prices, and a deploy annotation on every graph. |
+| 5 | Non-existent image tag | New pods `ImagePullBackOff`; app **Degraded**; `on-health-degraded` notification; old ReplicaSet keeps serving (`maxUnavailable: 0`). Fix with `git revert`: Git stays the truth, and a UI rollback would be undone by the next auto-sync and disables auto-sync on the app. |
+| 6 | Remove the RDS SG rule in Terraform, or rotate without restart | `/api/readyz` 503, `africair_db_up = 0`, `AfricairDatabaseDown` after 2 min to `page`; restore, and it resolves. |
+| 7 | Rotate `ADMIN_TOKEN`, then hammer `/api/admin/bookings` with wrong tokens | No sync needed; the fingerprint changes. `for i in $(seq 600); do curl -s -o /dev/null -H 'Authorization: Bearer wrong' https://<host>/api/admin/bookings; done` gives > 0.2/s denied, and `AfricairAdminBruteForce` fires after 5 min. |
+| 8 | `kubectl delete ns africair-staging` | Argo CD recreates the namespace (`CreateNamespace`) and everything in it; ESO resyncs; the migration is idempotent ("database schema is up to date"); e2e green again. |
+| 9 | k6, 5 min, ramp to 50 VUs | HPA scales the API above 2 replicas; latency and throughput on the dashboard; no `HighErrorRate`. |
+
+## Knowledge check
+
+**1. Pull-based GitOps vs push-based CI deploys.**
+- **Audit:** with GitOps the Git history is the deployment log (who, what, why, reviewed). A push
+  deploy's record is scattered across CI logs.
+- **Drift:** Argo CD continuously compares cluster to Git and self-heals. A push deploy only knows
+  what it applied at that moment.
+- **Credentials:** with pull, the cluster reaches *out* to Git, so CI needs no cluster credentials,
+  only push rights to a values file. With push, CI holds credentials that can change the cluster.
+- **Blast radius:** a compromised CI system with cluster-admin can do anything. With GitOps it can
+  only commit, which goes through reviews, branch protection and the AppProject restrictions.
+
+**2. Why secrets stay out of Git even with GitOps.** Git is replicated to every clone, fork, CI cache
+and backup, and history is forever: a leaked secret can't be "deleted". Access to Git isn't access
+control on secrets. With ESO, Git holds *references* (ExternalSecret: which key, which store) and
+Argo CD syncs those. ESO fetches the values at runtime with its IAM role. Rotation happens in Secrets
+Manager without a commit (drill 7).
+
+**3. Sync waves vs hooks vs Helm hooks.** Argo CD runs phases in order: **PreSync** hooks → **Sync**
+(normal resources and `Sync` hooks, wave by wave, each wave waiting for the previous one to be healthy)
+→ **PostSync** hooks (after everything is healthy), with **SyncFail** hooks on failure. Argo CD renders
+Helm charts with `helm template` and never runs Helm itself, so it **maps** `pre-install`/`pre-upgrade`
+→ PreSync and `post-install`/`post-upgrade` → PostSync, and **ignores** hooks it can't map
+(`pre-delete`, `pre-rollback`, `post-rollback`, `test`). The Helm hook weight becomes the wave inside
+that phase. A failed PreSync Job fails the whole sync operation: no Sync-phase resource is applied, the
+app shows the failed operation (and `on-sync-failed` fires), and the Job stays there for inspection
+until the next attempt (`BeforeHookCreation`).
+
+**4. `selfHeal` and `prune`.**
+- **selfHeal** reverts manual changes. That's dangerous during an incident, when someone hot-fixes in
+  the cluster and Argo CD silently undoes it, and with fields other controllers own (HPA replicas: use
+  `ignoreDifferences`).
+- **prune** deletes what isn't in Git. That's dangerous when a path or values refactor accidentally
+  drops resources (PVCs and data with them), or an app is pointed at the wrong path.
+
+Production is manual sync so a person decides **when** a reviewed change lands: inside the sync window
+(not at weekends), watching the rollout. Merging to `main` doesn't silently deploy to customers.
+
+**5. `rate()` vs `irate()`, and `sum by (le)`.** `irate` uses only the last two samples: very spiky,
+it reacts to a single scrape and ignores the rest of the window. Alerts need a stable signal over the
+window (`for:` then means "sustained"). `rate` averages over the whole range and handles counter
+resets. For histograms, `histogram_quantile` needs the *aggregated* bucket counts. You must `sum by
+(le)` (plus the labels you keep) **before** computing the quantile, because quantiles of individual
+pods can't be averaged or added: the mean of the per-pod p95s isn't the fleet's p95. Dropping `le`
+breaks the calculation entirely.
+
+**6. If Prometheus is down.** Nothing evaluates rules, so **no alert can fire**: silence looks like
+health. Detect it from outside: the always-firing **`Watchdog`** alert (from kube-prometheus-stack's
+default rules) is routed every minute to a *dead man's switch* (`deadmans-switch` receiver →
+healthchecks.io or PagerDuty heartbeat), which pages when the heartbeats *stop*. Add an
+`absent(up{job="prometheus"})`-style check in a second Prometheus or a managed service for redundancy.
+
+**7. Cardinality.** Every distinct label combination is a separate time series held in memory.
+`route` is bounded: the API's route table normalises paths (`/api/bookings/:reference`), giving about
+10 values. A booking `reference` is unbounded: one new series per booking, forever, so memory grows
+without limit and queries slow down, until Prometheus falls over. Per-booking details belong in logs
+or the database, not in metric labels.

@@ -1,0 +1,5 @@
+apiVersion: v2
+name: africair-platform
+description: Cluster-level AfricAir config managed by Argo CD - secret stores, platform credentials, dashboards, alerts.
+type: application
+version: 1.0.0

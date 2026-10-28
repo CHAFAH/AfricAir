@@ -1,0 +1,262 @@
+version: 2.1
+
+# Same pipeline as .github/workflows/{ci,release}.yml:
+#   every branch: verify → unit (node 20/22 + Postgres) · build → e2e (2 parallel shards) · images (build + scan)
+#   main:         images pushed to ECR as :<sha> → deploy staging → smoke
+#   tag vX.Y.Z:   promote (re-tag the same digests) → ⏸ hold (approval) → deploy production (restricted context)
+# Project settings: enable "Auto-cancel redundant workflows" (new pushes cancel older runs on the same branch,
+# never on main); create contexts "africair-staging" and "africair-production" (the latter restricted to a
+# security group) with AWS_ROLE_ARN set to the matching role from infra/terraform/envs/shared.
+
+orbs:
+  aws-cli: circleci/aws-cli@5.1.1
+  queue: eddiewebb/queue@3.2.1
+
+executors:
+  node:
+    parameters:
+      version: { type: string, default: "22.21" }
+    docker:
+      - image: cimg/node:<< parameters.version >>
+    resource_class: medium
+  node-postgres:
+    parameters:
+      version: { type: string, default: "22.21" }
+    docker:
+      - image: cimg/node:<< parameters.version >>
+      - image: cimg/postgres:16.4
+        environment:
+          POSTGRES_USER: africair
+          POSTGRES_DB: africair_test
+          POSTGRES_PASSWORD: ci-only-password
+    environment:
+      TEST_DATABASE_URL: postgres://africair:ci-only-password@localhost:5432/africair_test
+  playwright:
+    docker:
+      - image: mcr.microsoft.com/playwright:v1.64.0-noble
+    resource_class: large
+  builder:
+    machine:
+      image: ubuntu-2404:current
+      docker_layer_caching: false
+
+commands:
+  setup:
+    description: corepack + pnpm store cache keyed on the lockfile + frozen install
+    parameters:
+      cache-prefix: { type: string, default: pnpm-v1 }
+    steps:
+      - checkout
+      - run:
+          name: Enable corepack
+          command: |
+            sudo corepack enable 2>/dev/null || corepack enable
+            pnpm config set store-dir ~/.pnpm-store
+            pnpm --version
+      - restore_cache:
+          keys:
+            - << parameters.cache-prefix >>-{{ arch }}-{{ checksum "pnpm-lock.yaml" }}
+            - << parameters.cache-prefix >>-{{ arch }}-
+      - run: pnpm install --frozen-lockfile
+      - save_cache:
+          key: << parameters.cache-prefix >>-{{ arch }}-{{ checksum "pnpm-lock.yaml" }}
+          paths: [~/.pnpm-store]
+
+  aws-oidc:
+    description: Exchange the CircleCI OIDC token (v2) for short-lived AWS credentials. No stored keys.
+    steps:
+      - aws-cli/install
+      - run:
+          name: Assume AWS_ROLE_ARN with web identity
+          command: |
+            : "${AWS_ROLE_ARN:?set AWS_ROLE_ARN in the context}"
+            creds=$(aws sts assume-role-with-web-identity --role-arn "$AWS_ROLE_ARN" \
+              --role-session-name "circleci-${CIRCLE_WORKFLOW_ID:0:16}" --web-identity-token "$CIRCLE_OIDC_TOKEN_V2" \
+              --duration-seconds 3600 --query Credentials --output json)
+            {
+              echo "export AWS_ACCESS_KEY_ID=$(jq -r .AccessKeyId <<<"$creds")"
+              echo "export AWS_SECRET_ACCESS_KEY=$(jq -r .SecretAccessKey <<<"$creds")"
+              echo "export AWS_SESSION_TOKEN=$(jq -r .SessionToken <<<"$creds")"
+              echo "export AWS_REGION=${AWS_REGION:-eu-west-1} AWS_DEFAULT_REGION=${AWS_REGION:-eu-west-1}"
+            } >> "$BASH_ENV"
+      - run: aws sts get-caller-identity --query Arn --output text
+
+jobs:
+  verify:
+    executor: node
+    steps:
+      - setup
+      - run: pnpm check
+      - run: pnpm audit --audit-level=high
+
+  unit:
+    parameters:
+      node: { type: string }
+    executor:
+      name: node-postgres
+      version: << parameters.node >>
+    steps:
+      - setup:
+          cache-prefix: pnpm-node<< parameters.node >>
+      - run:
+          name: Wait for PostgreSQL
+          command: for i in $(seq 30); do (exec 3<>/dev/tcp/localhost/5432) 2>/dev/null && exit 0; sleep 1; done; exit 1
+      - run:
+          name: Unit + API tests (PostgreSQL suite included)
+          command: pnpm test --reporter=default --reporter=junit --outputFile.junit=test-results/unit/results.xml
+      - run:
+          name: Prove the database suite ran
+          command: grep -q 'API with PostgreSQL' test-results/unit/results.xml
+      - store_test_results: { path: test-results }
+      - store_artifacts: { path: test-results }
+
+  build:
+    executor: node
+    steps:
+      - setup
+      - run: pnpm build && pnpm build:api
+      - persist_to_workspace: { root: ., paths: [dist] }
+
+  e2e:
+    executor: playwright
+    parallelism: 2
+    environment:
+      CI: "true"
+    steps:
+      - setup:
+          cache-prefix: pnpm-playwright
+      - attach_workspace: { at: . }
+      - run:
+          name: e2e shard $CIRCLE_NODE_INDEX (desktop + mobile)
+          command: |
+            pnpm exec vite preview --port 4173 --strictPort &
+            npx --yes wait-on@8 -t 30000 http://localhost:4173
+            BASE_URL=http://localhost:4173 pnpm test:e2e --shard=$((CIRCLE_NODE_INDEX + 1))/$CIRCLE_NODE_TOTAL
+      - store_test_results: { path: test-results }
+      - store_artifacts: { path: playwright-report }
+      - store_artifacts: { path: test-results }
+
+  images:
+    parameters:
+      push: { type: boolean, default: false }
+    executor: builder
+    steps:
+      - checkout
+      - run:
+          name: hadolint
+          command: |
+            for f in Dockerfile.web Dockerfile.api; do
+              docker run --rm -i -v "$PWD/.hadolint.yaml:/.config/hadolint.yaml:ro" hadolint/hadolint:v2.12.0 < "$f"
+            done
+      - run:
+          name: Build both images (tests run inside the build)
+          command: |
+            for img in web api; do
+              docker buildx build --load -f "Dockerfile.$img" \
+                --build-arg "VERSION=${CIRCLE_BRANCH:-tag}-${CIRCLE_SHA1:0:7}" --build-arg "GIT_SHA=$CIRCLE_SHA1" \
+                --build-arg "BUILD_DATE=$(date -u +%Y-%m-%dT%H:%M:%SZ)" -t "africair-$img:$CIRCLE_SHA1" .
+            done
+      - run:
+          name: Trivy (fails on CRITICAL)
+          command: |
+            for img in web api; do
+              docker run --rm -v /var/run/docker.sock:/var/run/docker.sock aquasec/trivy:0.67.2 image --quiet \
+                --severity CRITICAL --exit-code 1 "africair-$img:$CIRCLE_SHA1"
+            done
+      - when:
+          condition: << parameters.push >>
+          steps:
+            - aws-oidc
+            - run:
+                name: Push :<sha> to ECR
+                command: |
+                  registry="$(aws sts get-caller-identity --query Account --output text).dkr.ecr.$AWS_REGION.amazonaws.com"
+                  aws ecr get-login-password | docker login --username AWS --password-stdin "$registry"
+                  for img in web api; do
+                    docker tag "africair-$img:$CIRCLE_SHA1" "$registry/africair-$img:$CIRCLE_SHA1"
+                    docker push --quiet "$registry/africair-$img:$CIRCLE_SHA1"
+                  done
+
+  deploy:
+    parameters:
+      environment: { type: enum, enum: [staging, production] }
+    executor: node
+    steps:
+      - checkout
+      - when:
+          condition: { equal: [production, << parameters.environment >>] }
+          steps:
+            # Only one production deploy at a time: later workflows wait at the front of the line.
+            - queue/until_front_of_line:
+                only-on-branch: "*"
+                time: "30"
+      - aws-oidc
+      - run:
+          name: Deploy << parameters.environment >> through SSM
+          command: |
+            tag=${CIRCLE_TAG:-$CIRCLE_SHA1}
+            url=$(scripts/ci/deploy-ec2.sh << parameters.environment >> "$tag" | tail -n1)
+            echo "export DEPLOY_URL=$url" >> "$BASH_ENV"
+      - run:
+          name: Smoke test
+          command: scripts/ci/smoke.sh "$DEPLOY_URL" "$CIRCLE_SHA1" << parameters.environment >>
+
+  promote:
+    executor: node
+    steps:
+      - checkout
+      - aws-oidc
+      - run:
+          name: Re-tag :$CIRCLE_SHA1 as :$CIRCLE_TAG (no rebuild)
+          command: scripts/ci/promote-images.sh "$CIRCLE_SHA1" "$CIRCLE_TAG"
+
+release-tags: &release-tags
+  filters:
+    tags: { only: /^v\d+\.\d+\.\d+$/ }
+    branches: { ignore: /.*/ }
+
+workflows:
+  ci:
+    jobs:
+      - verify
+      - unit:
+          requires: [verify]
+          matrix:
+            parameters:
+              node: ["20.19", "22.21"]
+      - build:
+          requires: [verify]
+      - e2e:
+          requires: [build]
+      - images:
+          name: images-scan
+          requires: [verify]
+          filters: { branches: { ignore: main } }
+      - images:
+          name: images-push
+          push: true
+          context: africair-staging
+          requires: [verify]
+          filters: { branches: { only: main } }
+      - deploy:
+          name: deploy-staging
+          environment: staging
+          context: africair-staging
+          requires: [unit, e2e, images-push]
+          filters: { branches: { only: main } }
+
+  release:
+    jobs:
+      - promote:
+          <<: *release-tags
+          context: africair-staging
+      - hold:
+          <<: *release-tags
+          type: approval
+          requires: [promote]
+      - deploy:
+          <<: *release-tags
+          name: deploy-production
+          environment: production
+          context: africair-production
+          requires: [hold]
