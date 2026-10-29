@@ -35,20 +35,6 @@ resource "aws_eks_pod_identity_association" "lb_controller" {
   role_arn        = aws_iam_role.lb_controller.arn
 }
 
-resource "helm_release" "lb_controller" {
-  name       = "aws-load-balancer-controller"
-  namespace  = "kube-system"
-  repository = "https://aws.github.io/eks-charts"
-  chart      = "aws-load-balancer-controller"
-  version    = "3.6.2"
-  values = [yamlencode({
-    clusterName    = aws_eks_cluster.this.name
-    region         = var.region
-    vpcId          = aws_vpc.this.id
-    serviceAccount = { create = true, name = "aws-load-balancer-controller" }
-  })]
-  depends_on = [aws_eks_node_group.this, aws_eks_addon.others, aws_eks_pod_identity_association.lb_controller]
-}
 
 # --- External Secrets Operator ------------------------------------------------------------------
 data "aws_iam_policy_document" "eso" {
@@ -75,25 +61,3 @@ resource "aws_eks_pod_identity_association" "eso" {
   role_arn        = aws_iam_role.eso.arn
 }
 
-resource "helm_release" "eso" {
-  name             = "external-secrets"
-  namespace        = "external-secrets"
-  create_namespace = true
-  repository       = "https://charts.external-secrets.io"
-  chart            = "external-secrets"
-  version          = "2.14.0"
-  values = [yamlencode({
-    installCRDs    = true
-    serviceAccount = { create = true, name = "external-secrets" }
-  })]
-  depends_on = [aws_eks_node_group.this, aws_eks_addon.others, aws_eks_pod_identity_association.eso]
-}
-
-# The ClusterSecretStore needs ESO's CRDs, so it is a small local chart installed after ESO.
-resource "helm_release" "secret_store" {
-  name       = "cluster-secret-store"
-  namespace  = "external-secrets"
-  chart      = "${path.module}/charts/cluster-secret-store"
-  values     = [yamlencode({ region = var.region })]
-  depends_on = [helm_release.eso]
-}
