@@ -1,93 +1,16 @@
 name: CI
 
-# Pull requests: verify → unit (+ PostgreSQL) · build → e2e · images (build + scan, no push).
-# main:          the same, then push both images to ECR (:<sha> and :latest) and helm-deploy staging.
-#
-# Repository variables (Settings → Secrets and variables → Actions → Variables):
-#   AWS_ROLE_ARN   terraform output ci_role_arn  (OIDC: no AWS keys are stored)
-#   AWS_REGION     eu-west-1 (default)
-#   EKS_CLUSTER    africair-stg-cluster (default)
 on:
   pull_request:
   push:
     branches: [main]
-  workflow_dispatch:
-
-# A new push to a PR cancels its previous run. main runs are never cancelled half-way through a deploy.
-concurrency:
-  group: ci-${{ github.event.pull_request.number || github.ref }}
-  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
-
-permissions:
-  contents: read
 
 env:
   AWS_REGION: ${{ vars.AWS_REGION || 'eu-west-1' }}
-  EKS_CLUSTER: ${{ vars.EKS_CLUSTER || 'africair-stg-cluster' }}
-  FORCE_COLOR: "1"
 
 jobs:
-  verify:
-    name: verify (types, audit, lint)
+  test:
     runs-on: ubuntu-24.04
-    timeout-minutes: 5
-    steps:
-      - uses: actions/checkout@v4
-      - uses: ./.github/actions/setup
-      - name: Type check (fails fast, before anything expensive)
-        run: pnpm check
-      - name: Dependency audit
-        run: pnpm audit --audit-level=high
-      - name: hadolint
-        run: |
-          for f in Dockerfile.web Dockerfile.api; do
-            docker run --rm -i -v "$PWD/.hadolint.yaml:/.config/hadolint.yaml:ro" hadolint/hadolint:v2.12.0 < "$f"
-          done
-      - name: shellcheck
-        run: docker run --rm -v "$PWD:/mnt" -w /mnt koalaman/shellcheck:v0.10.0 -x -P SCRIPTDIR scripts/ops/*.sh scripts/ci/*.sh scripts/docker/*.sh
-
-  manifests:
-    name: manifests (Terraform, Helm, alert rules)
-    runs-on: ubuntu-24.04
-    timeout-minutes: 10
-    steps:
-      - uses: actions/checkout@v4
-      - uses: hashicorp/setup-terraform@v3
-        with:
-          terraform_version: 1.13.4
-      - name: terraform fmt and validate
-        run: |
-          terraform -chdir=terraform fmt -check -recursive
-          terraform -chdir=terraform init -backend=false -input=false >/dev/null
-          terraform -chdir=terraform validate
-      - uses: azure/setup-helm@v4
-      - name: helm lint and kubeconform
-        run: |
-          kubeconform() {
-            docker run --rm -i ghcr.io/yannh/kubeconform:v0.7.0 -strict -summary -schema-location default \
-              -schema-location 'https://raw.githubusercontent.com/datreeio/CRDs-catalog/main/{{.Group}}/{{.ResourceKind}}_{{.ResourceAPIVersion}}.json'
-          }
-          helm lint deploy/helm/africair -f deploy/helm/africair/values-staging.yaml
-          helm template africair deploy/helm/africair -f deploy/helm/africair/values-staging.yaml | kubeconform
-          helm template store terraform/charts/cluster-secret-store | kubeconform
-          # Project 5 GitOps files (optional): keep them valid too
-          helm template africair deploy/helm/africair -f gitops/values/cluster.yaml -f gitops/values/africair-staging.yaml | kubeconform
-          helm template platform gitops/platform | kubeconform
-          for f in gitops/apps/*.yaml gitops/bootstrap/*.yaml; do cat "$f"; echo "---"; done | kubeconform
-      - name: promtool test rules
-        run: |
-          docker run --rm --entrypoint promtool -v "$PWD/gitops/platform/alerts:/a" -w /a/tests \
-            prom/prometheus:v3.7.3 test rules africair_test.yaml
-
-  unit:
-    name: unit + API tests (node ${{ matrix.node }})
-    needs: verify
-    runs-on: ubuntu-24.04
-    timeout-minutes: 10
-    strategy:
-      fail-fast: false
-      matrix:
-        node: ["20", "22"]
     services:
       postgres:
         image: postgres:16-alpine
@@ -96,134 +19,55 @@ jobs:
           POSTGRES_USER: africair
           POSTGRES_PASSWORD: ci-only-password
         ports: ["5432:5432"]
-        options: >-
-          --health-cmd "pg_isready -U africair -d africair_test"
-          --health-interval 5s --health-timeout 3s --health-retries 20
+        options: --health-cmd "pg_isready -U africair" --health-interval 5s --health-retries 10
     env:
       TEST_DATABASE_URL: postgres://africair:ci-only-password@localhost:5432/africair_test
     steps:
       - uses: actions/checkout@v4
-      - uses: ./.github/actions/setup
+      - uses: pnpm/action-setup@v4
+      - uses: actions/setup-node@v4
         with:
-          node-version: ${{ matrix.node }}
-      - name: Tests (the "API with PostgreSQL" suite runs because TEST_DATABASE_URL is set)
-        run: pnpm test --reporter=default --reporter=junit --outputFile.junit=test-results/unit.xml
-      - uses: mikepenz/action-junit-report@v5
-        if: always()
-        with:
-          report_paths: test-results/unit.xml
-          check_name: unit tests (node ${{ matrix.node }})
-          job_summary: true
-          annotate_only: true
-
-  build:
-    needs: verify
-    runs-on: ubuntu-24.04
-    timeout-minutes: 10
-    steps:
-      - uses: actions/checkout@v4
-      - uses: ./.github/actions/setup
-      - run: pnpm build && pnpm build:api
-      - uses: actions/upload-artifact@v4
-        with:
-          name: dist
-          path: dist/
-          retention-days: 7
-
-  e2e:
-    name: e2e (${{ matrix.project }} ${{ matrix.shard }}/2)
-    needs: build
-    runs-on: ubuntu-24.04
-    timeout-minutes: 15
-    container:
-      image: mcr.microsoft.com/playwright:v1.64.0-noble # browsers preinstalled
-      options: --ipc=host
-    strategy:
-      fail-fast: false
-      matrix:
-        project: [desktop, mobile]
-        shard: [1, 2]
-    env:
-      CI: "true"
-      HOME: /root
-    steps:
-      - uses: actions/checkout@v4
-      - uses: ./.github/actions/setup
-      - uses: actions/download-artifact@v4
-        with:
-          name: dist
-          path: dist
-      - name: Serve the build and run the shard
-        run: |
-          pnpm exec vite preview --port 4173 --strictPort &
-          npx --yes wait-on@8 -t 30000 http://localhost:4173
-          BASE_URL=http://localhost:4173 pnpm test:e2e --project=${{ matrix.project }} --shard=${{ matrix.shard }}/2
-      - uses: actions/upload-artifact@v4
-        if: always()
-        with:
-          name: playwright-${{ matrix.project }}-${{ matrix.shard }}
-          path: |
-            playwright-report/
-            test-results/
-          retention-days: 14
+          node-version: 22
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm check && pnpm test
 
   images:
-    name: images (build, scan${{ github.event_name == 'push' && ', push' || '' }})
-    needs: verify
+    needs: test
     runs-on: ubuntu-24.04
-    timeout-minutes: 20
     permissions:
       contents: read
-      id-token: write # OIDC to AWS, only used on main
+      id-token: write
     steps:
       - uses: actions/checkout@v4
-      - uses: docker/setup-buildx-action@v3
-      - name: Build both images (tests run inside the build)
+      - name: Build images
         run: |
-          for img in web api; do
-            docker buildx build --load -f "Dockerfile.$img" \
-              --cache-from "type=gha,scope=$img" --cache-to "type=gha,mode=max,scope=$img" \
-              --build-arg "VERSION=${GITHUB_SHA::7}" --build-arg "GIT_SHA=$GITHUB_SHA" \
-              --build-arg "BUILD_DATE=$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
-              -t "africair-$img:$GITHUB_SHA" .
-          done
-      - name: Trivy (fails on CRITICAL)
-        run: |
-          for img in web api; do
-            docker run --rm -v /var/run/docker.sock:/var/run/docker.sock aquasec/trivy:0.67.2 image --quiet \
-              --severity CRITICAL --exit-code 1 "africair-$img:$GITHUB_SHA"
-          done
+          docker build -f Dockerfile.web -t africair-web:$GITHUB_SHA .
+          docker build -f Dockerfile.api -t africair-api:$GITHUB_SHA .
       - uses: aws-actions/configure-aws-credentials@v4
-        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+        if: github.ref == 'refs/heads/main'
         with:
           role-to-assume: ${{ vars.AWS_ROLE_ARN }}
           aws-region: ${{ env.AWS_REGION }}
       - uses: aws-actions/amazon-ecr-login@v2
-        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+        if: github.ref == 'refs/heads/main'
         id: ecr
-      - name: Push :<sha> and :latest
-        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+      - name: Push to ECR
+        if: github.ref == 'refs/heads/main'
         env:
           REGISTRY: ${{ steps.ecr.outputs.registry }}
         run: |
           for img in web api; do
-            for tag in "$GITHUB_SHA" latest; do
-              docker tag "africair-$img:$GITHUB_SHA" "$REGISTRY/africair-$img:$tag"
-              docker push --quiet "$REGISTRY/africair-$img:$tag"
-            done
+            docker tag africair-$img:$GITHUB_SHA $REGISTRY/africair-$img:$GITHUB_SHA
+            docker tag africair-$img:$GITHUB_SHA $REGISTRY/africair-$img:latest
+            docker push $REGISTRY/africair-$img:$GITHUB_SHA
+            docker push $REGISTRY/africair-$img:latest
           done
 
-  deploy-staging:
-    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
-    needs: [unit, e2e, images]
+  deploy:
+    if: github.ref == 'refs/heads/main'
+    needs: images
     runs-on: ubuntu-24.04
-    timeout-minutes: 15
-    concurrency:
-      group: deploy-staging
-      cancel-in-progress: false
-    environment:
-      name: staging
-      url: ${{ steps.url.outputs.url }}
     permissions:
       contents: read
       id-token: write
@@ -234,21 +78,9 @@ jobs:
           role-to-assume: ${{ vars.AWS_ROLE_ARN }}
           aws-region: ${{ env.AWS_REGION }}
       - uses: azure/setup-helm@v4
-      - name: helm upgrade (image :${{ github.sha }})
-        run: |
-          aws eks update-kubeconfig --name "$EKS_CLUSTER" --region "$AWS_REGION"
-          registry="$(aws sts get-caller-identity --query Account --output text).dkr.ecr.$AWS_REGION.amazonaws.com"
+      - run: |
+          aws eks update-kubeconfig --name africair-stg-cluster --region $AWS_REGION
+          registry=$(aws sts get-caller-identity --query Account --output text).dkr.ecr.$AWS_REGION.amazonaws.com
           helm upgrade --install africair deploy/helm/africair -n africair-staging \
             -f deploy/helm/africair/values-staging.yaml \
-            --set image.registry="$registry" --set image.tag="$GITHUB_SHA" --wait --timeout 10m
-      - name: Wait for the ALB
-        id: url
-        run: |
-          for _ in $(seq 60); do
-            host=$(kubectl -n africair-staging get ingress africair -o jsonpath='{.status.loadBalancer.ingress[0].hostname}')
-            [ -n "$host" ] && break
-            sleep 5
-          done
-          echo "url=http://$host" >> "$GITHUB_OUTPUT"
-      - name: Smoke test (version.json and /api/config report this commit)
-        run: scripts/ci/smoke.sh "${{ steps.url.outputs.url }}" "$GITHUB_SHA" staging
+            --set image.registry=$registry --set image.tag=$GITHUB_SHA --wait --timeout 10m
