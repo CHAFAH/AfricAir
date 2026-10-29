@@ -63,6 +63,12 @@ variable "github_repository" {
   default     = "CHAFAH/AfricAir"
 }
 
+variable "admin_iam_arns" {
+  description = "List of IAM user or role ARNs to grant cluster-admin access (e.g. your console user)."
+  type        = list(string)
+  default     = []
+}
+
 variable "circleci_org_id" {
   description = "CircleCI organisation ID to create a CircleCI role. null = none."
   type        = string

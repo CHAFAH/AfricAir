@@ -84,7 +84,24 @@ resource "aws_eks_node_group" "this" {
   depends_on = [aws_iam_role_policy_attachment.node, aws_eks_addon.vpc_cni]
 }
 
-# --- add-ons ----------------------------------------------------------------------------------------
+# --- extra admin access entries ------------------------------------------------------------------
+resource "aws_eks_access_entry" "admins" {
+  for_each      = toset(var.admin_iam_arns)
+  cluster_name  = aws_eks_cluster.this.name
+  principal_arn = each.value
+  type          = "STANDARD"
+}
+
+resource "aws_eks_access_policy_association" "admins" {
+  for_each      = toset(var.admin_iam_arns)
+  cluster_name  = aws_eks_cluster.this.name
+  principal_arn = each.value
+  policy_arn    = "arn:aws:eks::aws:cluster-access-policy/AmazonEKSClusterAdminPolicy"
+  access_scope { type = "cluster" }
+  depends_on    = [aws_eks_access_entry.admins]
+}
+
+# --- add-ons ------------------------------------------------------------------------------------
 resource "aws_eks_addon" "vpc_cni" {
   cluster_name = aws_eks_cluster.this.name
   addon_name   = "vpc-cni"

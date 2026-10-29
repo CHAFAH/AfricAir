@@ -13,3 +13,5 @@ db_instance_class  = "db.t4g.micro"
 github_repository = "CHAFAH/AfricAir"
 # circleci_org_id     = "00000000-0000-0000-0000-000000000000"
 # circleci_project_id = "00000000-0000-0000-0000-000000000000"
+
+admin_iam_arns = ["arn:aws:iam::075120018043:user/landmark-eks"]
