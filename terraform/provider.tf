@@ -34,6 +34,8 @@ locals {
 }
 
 provider "helm" {
+  repository_cache  = "${path.module}/.helm/cache"
+  repository_config = "${path.module}/.helm/repositories.yaml"
   kubernetes = {
     host                   = aws_eks_cluster.this.endpoint
     cluster_ca_certificate = base64decode(aws_eks_cluster.this.certificate_authority[0].data)
