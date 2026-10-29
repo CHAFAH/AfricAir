@@ -78,9 +78,12 @@ jobs:
           role-to-assume: ${{ vars.AWS_ROLE_ARN }}
           aws-region: ${{ env.AWS_REGION }}
       - uses: azure/setup-helm@v4
+      - name: Update image values
+        run: |
+          registry=$(aws sts get-caller-identity --query Account --output text).dkr.ecr.$AWS_REGION.amazonaws.com
+          sed -i "s|REGISTRY_PLACEHOLDER|$registry|" deploy/helm/africair/values-staging.yaml
+          sed -i "s|TAG_PLACEHOLDER|$GITHUB_SHA|" deploy/helm/africair/values-staging.yaml
       - run: |
           aws eks update-kubeconfig --name africair-stg-cluster --region $AWS_REGION
-          registry=$(aws sts get-caller-identity --query Account --output text).dkr.ecr.$AWS_REGION.amazonaws.com
-          helm upgrade --install africair deploy/helm/africair -n africair-staging \
-            -f deploy/helm/africair/values-staging.yaml \
-            --set image.registry=$registry --set image.tag=$GITHUB_SHA --wait --timeout 10m
+          helm upgrade --install africair deploy/helm/africair \
+            -f deploy/helm/africair/values-staging.yaml

@@ -78,12 +78,16 @@ jobs:
           curl -fsSLo /tmp/kubectl https://dl.k8s.io/release/v1.32.0/bin/linux/amd64/kubectl
           sudo install /tmp/kubectl /usr/local/bin/kubectl
           curl -fsSL https://raw.githubusercontent.com/helm/helm/main/scripts/get-helm-3 | bash
+      - run:
+          name: Update image values
+          command: |
+            registry=$(aws sts get-caller-identity --query Account --output text).dkr.ecr.$AWS_REGION.amazonaws.com
+            sed -i "s|REGISTRY_PLACEHOLDER|$registry|" deploy/helm/africair/values-staging.yaml
+            sed -i "s|TAG_PLACEHOLDER|$CIRCLE_SHA1|" deploy/helm/africair/values-staging.yaml
       - run: |
           aws eks update-kubeconfig --name africair-stg-cluster --region $AWS_REGION
-          registry=$(aws sts get-caller-identity --query Account --output text).dkr.ecr.$AWS_REGION.amazonaws.com
-          helm upgrade --install africair deploy/helm/africair -n africair-staging \
-            -f deploy/helm/africair/values-staging.yaml \
-            --set image.registry=$registry --set image.tag=$CIRCLE_SHA1 --wait --timeout 10m
+          helm upgrade --install africair deploy/helm/africair \
+            -f deploy/helm/africair/values-staging.yaml
 
 workflows:
   ci:

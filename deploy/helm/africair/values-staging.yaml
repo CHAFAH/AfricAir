@@ -2,8 +2,8 @@
 #   helm upgrade --install africair deploy/helm/africair -n africair-staging --create-namespace \
 #     -f deploy/helm/africair/values-staging.yaml --set image.registry=<ecr_registry> --set image.tag=v1.0
 image:
-  registry: ""   # terraform output ecr_registry
-  tag: v1.0
+  registry: "REGISTRY_PLACEHOLDER"
+  tag: "TAG_PLACEHOLDER"
 
 web:
   env:
