@@ -1,6 +1,7 @@
-# In-cluster controllers, installed by terraform apply. Both get AWS permissions through EKS Pod Identity.
+# In-cluster controllers and GitOps, installed by terraform apply.
 #   AWS Load Balancer Controller  creates the ALB for the app's Ingress
-#   External Secrets Operator     copies the Secrets Manager secrets into Kubernetes Secrets
+#   External Secrets Operator     copies Secrets Manager secrets into Kubernetes Secrets
+#   Argo CD                       GitOps controller; bootstrapped with the app-of-apps
 
 data "aws_iam_policy_document" "pod_identity_assume" {
   statement {
@@ -20,7 +21,7 @@ resource "aws_iam_role" "lb_controller" {
 
 resource "aws_iam_policy" "lb_controller" {
   name   = "${local.name}-lb-controller"
-  policy = file("${path.module}/policies/aws-load-balancer-controller.json") # upstream policy, v3.6.2
+  policy = file("${path.module}/policies/aws-load-balancer-controller.json")
 }
 
 resource "aws_iam_role_policy_attachment" "lb_controller" {
@@ -33,6 +34,38 @@ resource "aws_eks_pod_identity_association" "lb_controller" {
   namespace       = "kube-system"
   service_account = "aws-load-balancer-controller"
   role_arn        = aws_iam_role.lb_controller.arn
+}
+
+resource "helm_release" "lb_controller" {
+  name       = "aws-load-balancer-controller"
+  repository = "https://aws.github.io/eks-charts"
+  chart      = "aws-load-balancer-controller"
+  version    = "3.6.2"
+  namespace  = "kube-system"
+  wait       = true
+
+  set {
+    name  = "clusterName"
+    value = aws_eks_cluster.this.name
+  }
+  set {
+    name  = "region"
+    value = var.region
+  }
+  set {
+    name  = "vpcId"
+    value = aws_vpc.this.id
+  }
+  set {
+    name  = "serviceAccount.create"
+    value = "true"
+  }
+  set {
+    name  = "serviceAccount.name"
+    value = "aws-load-balancer-controller"
+  }
+
+  depends_on = [aws_eks_node_group.this, aws_eks_pod_identity_association.lb_controller]
 }
 
 
@@ -61,3 +94,76 @@ resource "aws_eks_pod_identity_association" "eso" {
   role_arn        = aws_iam_role.eso.arn
 }
 
+resource "helm_release" "eso" {
+  name       = "external-secrets"
+  repository = "https://charts.external-secrets.io"
+  chart      = "external-secrets"
+  version    = "0.14.4"
+  namespace  = "external-secrets"
+  create_namespace = true
+  wait       = true
+
+  set {
+    name  = "serviceAccount.name"
+    value = "external-secrets"
+  }
+
+  depends_on = [aws_eks_node_group.this, aws_eks_pod_identity_association.eso]
+}
+
+
+# --- Argo CD ------------------------------------------------------------------------------------
+resource "helm_release" "argocd" {
+  name             = "argocd"
+  repository       = "https://argoproj.github.io/argo-helm"
+  chart            = "argo-cd"
+  version          = "7.8.23"
+  namespace        = "argocd"
+  create_namespace = true
+  wait             = true
+
+  set {
+    name  = "configs.params.server\.insecure"
+    value = "true"
+  }
+
+  # Ignore all future changes — Argo CD manages itself via gitops/apps/argocd.yaml after bootstrap
+  lifecycle {
+    ignore_changes = all
+  }
+
+  depends_on = [aws_eks_node_group.this]
+}
+
+# Bootstrap the app-of-apps so Argo CD takes over immediately after install
+resource "kubernetes_manifest" "argocd_root_app" {
+  manifest = {
+    apiVersion = "argoproj.io/v1alpha1"
+    kind       = "Application"
+    metadata = {
+      name      = "root"
+      namespace = "argocd"
+      finalizers = ["resources-finalizer.argocd.argoproj.io"]
+    }
+    spec = {
+      project = "default"
+      source = {
+        repoURL        = "https://github.com/CHAFAH/AfricAir.git"
+        targetRevision = "main"
+        path           = "gitops/apps"
+      }
+      destination = {
+        server    = "https://kubernetes.default.svc"
+        namespace = "argocd"
+      }
+      syncPolicy = {
+        automated = {
+          prune     = true
+          selfHeal  = true
+        }
+      }
+    }
+  }
+
+  depends_on = [helm_release.argocd]
+}

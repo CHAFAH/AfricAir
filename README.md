@@ -182,50 +182,24 @@ ci_role_arn         = "arn:aws:iam::<account>:role/africair-stg-ci"
 
 ---
 
-### 3. Access the cluster and install controllers
+### 3. Access the cluster
 
 ```bash
 aws eks update-kubeconfig --name africair-stg-cluster --region eu-west-1
 kubectl get nodes
 ```
 
-Terraform created the IAM roles but does not install the controllers. Run these once from the repo root:
+Terraform installs the AWS Load Balancer Controller, External Secrets Operator, and Argo CD as part of `terraform apply`. It also bootstraps the Argo CD app-of-apps, so the `africair-staging` Application is created automatically.
 
-```bash
-helm repo add eks https://aws.github.io/eks-charts
-helm repo add external-secrets https://charts.external-secrets.io
-helm repo update
-```
-
-#### External Secrets Operator
-
-```bash
-helm install external-secrets external-secrets/external-secrets \
-  -n external-secrets --create-namespace --wait \
-  --set serviceAccount.annotations."eks\.amazonaws\.com/role-arn"=$(cd terraform && terraform output -raw eso_role_arn)
-```
-
-#### AWS Load Balancer Controller
-
-```bash
-helm install aws-load-balancer-controller eks/aws-load-balancer-controller \
-  -n kube-system --wait \
-  --set clusterName=africair-stg-cluster \
-  --set region=eu-west-1 \
-  --set vpcId=$(aws ec2 describe-vpcs --filters "Name=tag:Project,Values=africair" --query "Vpcs[0].VpcId" --output text --region eu-west-1) \
-  --set serviceAccount.create=true \
-  --set serviceAccount.name=aws-load-balancer-controller \
-  --set serviceAccount.annotations."eks\.amazonaws\.com/role-arn"=$(cd terraform && terraform output -raw lb_controller_role_arn)
-```
-
-Verify:
+Verify the controllers are ready:
 
 ```bash
 kubectl get deployment aws-load-balancer-controller -n kube-system
 kubectl get deployment external-secrets -n external-secrets
+kubectl get deployment argocd-server -n argocd
 ```
 
-Expected: both `2/2` (or `1/1`) Ready.
+Expected: all `1/1` Ready.
 
 ---
 
@@ -275,35 +249,15 @@ The pipeline builds and pushes the images — you do not need to build or push D
 
 ---
 
-### 5. Install Argo CD and bootstrap GitOps
+### 5. Access Argo CD
 
-#### Install Argo CD
-
-```bash
-helm repo add argo https://argoproj.github.io/argo-helm
-helm repo update
-helm install argocd argo/argo-cd \
-  -n argocd --create-namespace --wait \
-  --set configs.params.server.insecure=true
-```
-
-#### Bootstrap the app-of-apps
-
-This single command hands everything over to Argo CD:
-
-```bash
-kubectl apply -n argocd -f gitops/bootstrap/root-app.yaml
-```
-
-Argo CD will now create and sync the `africair` AppProject and the `africair-staging` Application automatically.
-
-#### Access the Argo CD UI
+Argo CD is installed by Terraform and the app-of-apps is bootstrapped automatically. Access the UI via port-forward:
 
 ```bash
 kubectl port-forward svc/argocd-server -n argocd 8080:80
 ```
 
-Open http://localhost:8080. Login with:
+Open http://localhost:8080 and login with:
 
 ```bash
 # username: admin
@@ -311,18 +265,15 @@ Open http://localhost:8080. Login with:
 kubectl get secret argocd-initial-admin-secret -n argocd -o jsonpath="{.data.password}" | base64 -d
 ```
 
-#### How GitOps deploys work after this
-
-Every push to `main`:
-1. CI builds and pushes images to ECR
-2. CI commits the new SHA to `gitops/values/africair-staging.yaml`
-3. Argo CD detects the commit and syncs the Helm release automatically
-
-You can also trigger a manual sync from the UI or CLI:
+Check that the `africair-staging` Application is synced:
 
 ```bash
-argocd app sync africair-staging
+kubectl get applications -n argocd
 ```
+
+Expected: `africair-staging` shows `Synced` and `Healthy`.
+
+After the first pipeline run the `gitops-bump` job commits the real image SHA. From then on every push to `main` triggers an automatic Argo CD sync — no manual `helm upgrade` needed.
 
 ---
 
@@ -390,12 +341,8 @@ The `africair-migrate` job completes, then one `web` and one `api` pod become `R
 Delete the app first so the Load Balancer Controller removes the ALB that Terraform did not create:
 
 ```bash
-# If using Argo CD, delete the root app (cascades to all managed apps)
+# Delete the Argo CD root app — cascades to all managed apps and removes the ALB
 kubectl delete app root -n argocd
-kubectl get ingress -A          # wait until nothing is left
-
-# If using Helm directly
-helm uninstall africair
 kubectl get ingress -A          # wait until nothing is left
 
 cd terraform
