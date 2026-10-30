@@ -5,6 +5,10 @@ on:
   push:
     branches: [main]
 
+permissions:
+  contents: read
+  id-token: write
+
 env:
   AWS_REGION: ${{ vars.AWS_REGION || 'eu-west-1' }}
   AWS_ROLE_ARN: ${{ vars.AWS_ROLE_ARN || 'arn:aws:iam::075120018043:role/africair-stg-ci' }}
