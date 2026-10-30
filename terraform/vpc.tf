@@ -31,8 +31,8 @@ resource "aws_subnet" "public" {
   map_public_ip_on_launch = true
   tags = {
     Name                                  = "${local.name}-public-${local.azs[count.index]}"
-    "kubernetes.io/role/elb"              = "1" # the Load Balancer Controller puts the ALB here
-    "kubernetes.io/cluster/${local.name}" = "shared"
+    "kubernetes.io/role/elb"                       = "1" # the Load Balancer Controller puts the ALB here
+    "kubernetes.io/cluster/${local.name}-cluster" = "shared"
   }
 }
 

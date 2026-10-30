@@ -13,6 +13,6 @@ WORKDIR /app
 COPY --from=build /app/server/dist/ ./dist/
 COPY --from=build /app/node_modules/ ./node_modules/
 ENV NODE_ENV=production PORT=4000
-USER node
+USER 1000
 EXPOSE 4000
 CMD ["node", "dist/index.js"]
