@@ -219,7 +219,7 @@ aws eks update-kubeconfig --name africair-stg-cluster --region eu-west-1
 kubectl get nodes
 ```
 
-Terraform created the IAM roles but does not install the controllers. Run these once:
+Terraform created the IAM roles but does not install the controllers. Run these once from the repo root:
 
 ```bash
 helm repo add eks https://aws.github.io/eks-charts
@@ -227,42 +227,35 @@ helm repo add external-secrets https://charts.external-secrets.io
 helm repo update
 ```
 
-#### AWS Load Balancer Controller
-
-```bash
-helm upgrade --install aws-load-balancer-controller eks/aws-load-balancer-controller \
-  -n kube-system \
-  --set clusterName=africair-stg-cluster \
-  --set region=eu-west-1 \
-  --set serviceAccount.create=true \
-  --set serviceAccount.name=aws-load-balancer-controller
-```
-
 #### External Secrets Operator
 
 ```bash
-helm upgrade --install external-secrets external-secrets/external-secrets \
-  -n external-secrets --create-namespace \
-  --set installCRDs=true \
-  --set serviceAccount.create=true \
-  --set serviceAccount.name=external-secrets
+helm install external-secrets external-secrets/external-secrets \
+  -n external-secrets --create-namespace --wait \
+  --set serviceAccount.annotations."eks\.amazonaws\.com/role-arn"=$(cd terraform && terraform output -raw eso_role_arn)
 ```
 
-#### ClusterSecretStore
+#### AWS Load Balancer Controller
 
 ```bash
-helm upgrade --install cluster-secret-store terraform/charts/cluster-secret-store \
-  -n external-secrets --set region=eu-west-1
+helm install aws-load-balancer-controller eks/aws-load-balancer-controller \
+  -n kube-system --wait \
+  --set clusterName=africair-stg-cluster \
+  --set region=eu-west-1 \
+  --set vpcId=$(aws ec2 describe-vpcs --filters "Name=tag:Project,Values=africair" --query "Vpcs[0].VpcId" --output text --region eu-west-1) \
+  --set serviceAccount.create=true \
+  --set serviceAccount.name=aws-load-balancer-controller \
+  --set serviceAccount.annotations."eks\.amazonaws\.com/role-arn"=$(cd terraform && terraform output -raw lb_controller_role_arn)
 ```
 
 Verify:
 
 ```bash
 kubectl get deployment aws-load-balancer-controller -n kube-system
-kubectl get clustersecretstore
+kubectl get deployment external-secrets -n external-secrets
 ```
 
-Expected: controller `2/2` and `aws-secrets-manager` with `READY True`.
+Expected: both `2/2` (or `1/1`) Ready.
 
 ---
 

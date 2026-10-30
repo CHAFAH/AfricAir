@@ -34,3 +34,11 @@ output "ci_role_arn" {
   description = "GitHub variable AWS_ROLE_ARN / CircleCI context variable AWS_ROLE_ARN."
   value       = try(aws_iam_role.ci[0].arn, null)
 }
+
+output "lb_controller_role_arn" {
+  value = aws_iam_role.lb_controller.arn
+}
+
+output "eso_role_arn" {
+  value = aws_iam_role.eso.arn
+}
