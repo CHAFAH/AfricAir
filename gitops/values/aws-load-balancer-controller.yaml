@@ -1,8 +1,7 @@
-# Fill in from `terraform -chdir=terraform output` (cluster_name, region) and the VPC ID (aws ec2 describe-vpcs).
-clusterName: africair-team1-staging
-region: eu-west-1          # passed explicitly: IMDS hop limit 1 hides the instance metadata from pods
-vpcId: vpc-0123456789abcdef0
-replicaCount: 2
+clusterName: africair-stg-cluster
+region: eu-west-1
+vpcId: vpc-0a8587b5cafa77d22
+replicaCount: 1
 serviceAccount:
   create: true
   name: aws-load-balancer-controller

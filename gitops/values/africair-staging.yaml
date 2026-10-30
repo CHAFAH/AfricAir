@@ -1,19 +1,20 @@
-# Staging: the Project 4 chart, managed by Argo CD. CI (gitops-bump job) rewrites image.tag.
 gitops:
   enabled: true
 
 image:
-  tag: "0000000000000000000000000000000000000000"   # quoted: an all-digit SHA would be a YAML number
+  tag: "0000000000000000000000000000000000000000"
 
 web:
+  replicas: 1
   env:
     APP_ENV: staging
 
 api:
+  replicas: 1
   env:
     APP_ENV: staging
     BRAND_NAME: AfricAir Staging
-    ANNOUNCEMENT_TEXT: "Running on Amazon EKS — staging, deployed by Argo CD"
+    ANNOUNCEMENT_TEXT: "Running on Amazon EKS — deployed by Argo CD"
     ANNOUNCEMENT_LEVEL: info
     SERVICE_FEE_USD: "7"
     DEFAULT_CURRENCY: KES
@@ -21,15 +22,26 @@ api:
     DB_SSL: require
 
 secrets:
+  externalSecrets: false
   appSecretName: africair/stg/app
+  dbSecretName: africair/stg/db
 
 ingress:
-  groupName: africair
-  host: ""            # staging.<domain>
+  host: ""
+  certificateArn: ""
+
+autoscaling:
+  enabled: false
+
+migrations:
+  enabled: true
+
+networkPolicy:
+  enabled: false
 
 backup:
-  enabled: false   # no backup bucket in the simplified staging infrastructure
+  enabled: false
 
 metrics:
   serviceMonitor:
-    enabled: true
+    enabled: false

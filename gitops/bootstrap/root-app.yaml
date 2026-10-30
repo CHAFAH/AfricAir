@@ -1,13 +1,13 @@
-# The only Application applied by hand (after Terraform installed Argo CD):
+# The only Application applied by hand (once, after Argo CD is installed):
 #   kubectl apply -n argocd -f gitops/bootstrap/root-app.yaml
-# Everything else is in gitops/apps and is created by this app (app-of-apps).
+# Everything else in gitops/apps/ is created and managed by this app-of-apps.
 apiVersion: argoproj.io/v1alpha1
 kind: Application
 metadata:
   name: root
   namespace: argocd
   finalizers:
-    - resources-finalizer.argocd.argoproj.io # deleting root cascades to every app
+    - resources-finalizer.argocd.argoproj.io
 spec:
   project: default
   source:

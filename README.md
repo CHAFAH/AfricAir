@@ -264,17 +264,69 @@ git commit -m "trigger: deploy to staging"
 git push origin main
 ```
 
-Go to **Actions** in your GitHub repository. You will see the `CI` workflow running three jobs in order:
+Go to **Actions** in your GitHub repository. You will see the `CI` workflow running jobs in order:
 
 1. `test` — runs type checks and unit tests with a PostgreSQL service container
 2. `images` — builds both Docker images, pushes `:<sha>` and `:latest` to ECR
-3. `deploy` — patches `values-staging.yaml` with the ECR registry and commit SHA, then runs `helm upgrade --install` against the EKS cluster
+3. `deploy` — creates k8s secrets from Secrets Manager, then runs `helm upgrade --install`
+4. `gitops-bump` — commits the new image SHA to `gitops/values/africair-staging.yaml` so Argo CD picks it up
 
 The pipeline builds and pushes the images — you do not need to build or push Docker images manually.
 
 ---
 
-### 5. Access the application
+### 5. Install Argo CD and bootstrap GitOps
+
+#### Install Argo CD
+
+```bash
+helm repo add argo https://argoproj.github.io/argo-helm
+helm repo update
+helm install argocd argo/argo-cd \
+  -n argocd --create-namespace --wait \
+  --set configs.params.server.insecure=true
+```
+
+#### Bootstrap the app-of-apps
+
+This single command hands everything over to Argo CD:
+
+```bash
+kubectl apply -n argocd -f gitops/bootstrap/root-app.yaml
+```
+
+Argo CD will now create and sync the `africair` AppProject and the `africair-staging` Application automatically.
+
+#### Access the Argo CD UI
+
+```bash
+kubectl port-forward svc/argocd-server -n argocd 8080:80
+```
+
+Open http://localhost:8080. Login with:
+
+```bash
+# username: admin
+# password:
+kubectl get secret argocd-initial-admin-secret -n argocd -o jsonpath="{.data.password}" | base64 -d
+```
+
+#### How GitOps deploys work after this
+
+Every push to `main`:
+1. CI builds and pushes images to ECR
+2. CI commits the new SHA to `gitops/values/africair-staging.yaml`
+3. Argo CD detects the commit and syncs the Helm release automatically
+
+You can also trigger a manual sync from the UI or CLI:
+
+```bash
+argocd app sync africair-staging
+```
+
+---
+
+### 6. Access the application
 
 The ALB address appears on the Ingress after 1-3 minutes:
 
@@ -299,7 +351,7 @@ aws secretsmanager get-secret-value --secret-id africair/stg/app --query SecretS
 
 ---
 
-### 6. Manual deploy with Helm (optional — skip if using the pipeline)
+### 7. Manual deploy with Helm (optional — skip if using the pipeline)
 
 If you want to deploy without the pipeline, build and push the images first:
 
@@ -333,11 +385,16 @@ The `africair-migrate` job completes, then one `web` and one `api` pod become `R
 
 ---
 
-### 7. Destroy the infrastructure
+### 8. Destroy the infrastructure
 
 Delete the app first so the Load Balancer Controller removes the ALB that Terraform did not create:
 
 ```bash
+# If using Argo CD, delete the root app (cascades to all managed apps)
+kubectl delete app root -n argocd
+kubectl get ingress -A          # wait until nothing is left
+
+# If using Helm directly
 helm uninstall africair
 kubectl get ingress -A          # wait until nothing is left
 
@@ -355,6 +412,8 @@ terraform destroy -var-file=stg.tfvars
 | `kubectl` returns `Unauthorized` | Re-run `aws eks update-kubeconfig ...` with the same profile that ran `terraform apply` |
 | Pods `ImagePullBackOff` | The tag doesn't exist in ECR: `aws ecr describe-images --repository-name africair-api` |
 | ExternalSecret `SecretSyncedError` | `kubectl describe externalsecret africair-db` and `kubectl logs -n external-secrets deploy/external-secrets` |
+| Argo CD app stuck `OutOfSync` | `argocd app sync africair-staging --force` or check `kubectl logs -n argocd deploy/argocd-repo-server` |
+| Argo CD can't pull repo | Ensure the repo is public or add credentials: `argocd repo add https://github.com/CHAFAH/AfricAir.git` |
 | Ingress has no ADDRESS | `kubectl logs -n kube-system deploy/aws-load-balancer-controller` |
 | `/api/readyz` returns 503 | The API can't reach RDS: check the `africair-db` secret and `kubectl logs deploy/africair-api` |
 | `terraform destroy` fails on the VPC | An ALB still exists: delete the Ingress (step 7), wait, retry |
