@@ -30,6 +30,13 @@ spec:
           whenUnsatisfiable: ScheduleAnyway
           labelSelector:
             matchLabels: {{- include "africair.selector" (dict "root" . "component" "web") | nindent 14 }}
+      initContainers:
+        - name: init-tmp
+          image: busybox:1.37
+          command: ["mkdir", "-p", "/tmp/nginx-conf"]
+          securityContext: {{- include "africair.containerSecurityContext" . | nindent 12 }}
+          volumeMounts:
+            - { name: tmp, mountPath: /tmp }
       containers:
         - name: web
           image: {{ include "africair.image" (dict "root" . "name" "africair-web") }}
