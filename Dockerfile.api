@@ -7,15 +7,18 @@ RUN pnpm install --frozen-lockfile
 COPY tsconfig.json vite.config.ts ./
 COPY server/ server/
 RUN pnpm build:api
+# Production-only node_modules (pg, prom-client) as real files, not pnpm symlinks into /app/node_modules
+RUN pnpm --filter @africair/api deploy --prod /out && cp -R server/dist /out/dist
 
 FROM node:22-alpine
 WORKDIR /app
-COPY --from=build /app/node_modules/ ./node_modules/
-COPY --from=build /app/server/node_modules/ ./server/node_modules/
-COPY --from=build /app/server/dist/ ./server/dist/
-COPY --from=build /app/server/package.json ./server/
+COPY --from=build /out/package.json ./
+COPY --from=build /out/node_modules/ ./node_modules/
+COPY --from=build /out/dist/ ./dist/
+COPY --from=build /out/migrations/ ./migrations/
 ENV NODE_ENV=production PORT=4000
 USER 1000
 EXPOSE 4000
-WORKDIR /app/server
+HEALTHCHECK --interval=10s --timeout=3s --start-period=10s --retries=3 \
+  CMD wget -q -O /dev/null http://127.0.0.1:4000/api/healthz || exit 1
 CMD ["node", "dist/index.js"]

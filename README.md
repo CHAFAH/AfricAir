@@ -326,10 +326,10 @@ helm upgrade --install africair deploy/helm/africair \
 Check it:
 
 ```bash
-kubectl get externalsecret,pods,ingress
+kubectl get jobs,pods,ingress
 ```
 
-The ExternalSecrets show `SecretSynced`, the `africair-migrate` job completes, then two `web` and two `api` pods become `Running`.
+The `africair-migrate` job completes, then one `web` and one `api` pod become `Running`.
 
 ---
 

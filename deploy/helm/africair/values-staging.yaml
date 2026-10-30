@@ -19,10 +19,6 @@ api:
     MAINTENANCE_MODE: "false"
     DB_SSL: require
 
-secrets:
-  appSecretName: africair/stg/app
-  dbSecretName: africair/stg/db
-
 ingress:
   host: ""
   certificateArn: ""
@@ -30,8 +26,10 @@ ingress:
 autoscaling:
   enabled: false
 
+# Creates the schema before every install/upgrade (Helm pre-install/pre-upgrade hook).
+# Needs the africair-db Secret, which the pipeline creates before running helm.
 migrations:
-  enabled: false
+  enabled: true
 
 networkPolicy:
   enabled: false

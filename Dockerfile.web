@@ -5,11 +5,22 @@ COPY package.json pnpm-lock.yaml pnpm-workspace.yaml ./
 COPY server/package.json server/
 RUN pnpm install --frozen-lockfile
 COPY . .
-RUN pnpm check && pnpm test && pnpm build
+ARG VERSION=dev
+ARG GIT_SHA=unknown
+ARG BUILD_DATE=unknown
+RUN pnpm check && pnpm test && pnpm build \
+ && printf '{"commit":"%s","version":"%s","builtAt":"%s"}\n' "$GIT_SHA" "$VERSION" "$BUILD_DATE" > dist/version.json
 
 FROM nginxinc/nginx-unprivileged:1.29-alpine
+USER root
+RUN rm -f /etc/nginx/conf.d/default.conf
 COPY deploy/docker/nginx/nginx.conf /etc/nginx/nginx.conf
+# Creates the template output dir in /tmp (the only writable path with a read-only root filesystem)
+COPY --chmod=0755 deploy/docker/nginx/05-prepare-tmp.sh /docker-entrypoint.d/
 COPY deploy/nginx/templates/ /etc/nginx/templates/
 COPY --from=build /app/dist/ /usr/share/nginx/html/
-ENV API_UPSTREAM=http://api:4000 NGINX_ENVSUBST_OUTPUT_DIR=/tmp/nginx-conf
+USER 101
+ENV API_UPSTREAM=http://api:4000 NGINX_ENVSUBST_OUTPUT_DIR=/tmp/nginx-conf NGINX_ENTRYPOINT_LOCAL_RESOLVERS=1
 EXPOSE 8080
+HEALTHCHECK --interval=10s --timeout=3s --start-period=5s --retries=3 \
+  CMD wget -q -O /dev/null http://127.0.0.1:8080/healthz || exit 1
