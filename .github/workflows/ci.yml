@@ -33,6 +33,7 @@ jobs:
       - run: pnpm check && pnpm test
 
   images:
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
     needs: test
     runs-on: ubuntu-24.04
     steps:
@@ -42,16 +43,13 @@ jobs:
           docker build -f Dockerfile.web -t africair-web:$GITHUB_SHA .
           docker build -f Dockerfile.api -t africair-api:$GITHUB_SHA .
       - uses: aws-actions/configure-aws-credentials@v4
-        if: github.ref == 'refs/heads/main'
         with:
           aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
           aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
           aws-region: ${{ env.AWS_REGION }}
       - uses: aws-actions/amazon-ecr-login@v2
-        if: github.ref == 'refs/heads/main'
         id: ecr
       - name: Push to ECR
-        if: github.ref == 'refs/heads/main'
         env:
           REGISTRY: ${{ steps.ecr.outputs.registry }}
         run: |
@@ -63,9 +61,10 @@ jobs:
           done
 
   deploy:
-    if: github.ref == 'refs/heads/main'
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
     needs: images
     runs-on: ubuntu-24.04
+    environment: staging
     steps:
       - uses: actions/checkout@v4
       - uses: aws-actions/configure-aws-credentials@v4
@@ -79,7 +78,15 @@ jobs:
           registry=$(aws sts get-caller-identity --query Account --output text).dkr.ecr.$AWS_REGION.amazonaws.com
           sed -i "s|REGISTRY_PLACEHOLDER|$registry|" deploy/helm/africair/values-staging.yaml
           sed -i "s|TAG_PLACEHOLDER|$GITHUB_SHA|" deploy/helm/africair/values-staging.yaml
-      - run: |
+      - name: Create Kubernetes secrets from Secrets Manager
+        run: |
           aws eks update-kubeconfig --name africair-stg-cluster --region $AWS_REGION
+          DB_URL=$(aws secretsmanager get-secret-value --secret-id africair/stg/db --query SecretString --output text | python3 -c "import sys,json; print(json.load(sys.stdin)['DATABASE_URL'])")
+          APP=$(aws secretsmanager get-secret-value --secret-id africair/stg/app --query SecretString --output text)
+          ADMIN_TOKEN=$(echo $APP | python3 -c "import sys,json; print(json.load(sys.stdin)['ADMIN_TOKEN'])")
+          PROMO_CODES=$(echo $APP | python3 -c "import sys,json; print(json.load(sys.stdin)['PROMO_CODES'])")
+          kubectl create secret generic africair-db --from-literal=DATABASE_URL="$DB_URL" --dry-run=client -o yaml | kubectl apply -f -
+          kubectl create secret generic africair-app --from-literal=ADMIN_TOKEN="$ADMIN_TOKEN" --from-literal=PROMO_CODES="$PROMO_CODES" --dry-run=client -o yaml | kubectl apply -f -
+      - run: |
           helm upgrade --install africair deploy/helm/africair \
             -f deploy/helm/africair/values-staging.yaml

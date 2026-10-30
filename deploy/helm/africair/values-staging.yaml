@@ -1,15 +1,14 @@
-# Staging (terraform -var-file=stg.tfvars). Install with:
-#   helm upgrade --install africair deploy/helm/africair -n africair-staging --create-namespace \
-#     -f deploy/helm/africair/values-staging.yaml --set image.registry=<ecr_registry> --set image.tag=v1.0
 image:
   registry: "REGISTRY_PLACEHOLDER"
   tag: "TAG_PLACEHOLDER"
 
 web:
+  replicas: 1
   env:
     APP_ENV: staging
 
 api:
+  replicas: 1
   env:
     APP_ENV: staging
     BRAND_NAME: AfricAir Staging
@@ -21,12 +20,30 @@ api:
     DB_SSL: require
 
 secrets:
-  appSecretName: africair/stg/app   # created by Terraform
+  appSecretName: africair/stg/app
   dbSecretName: africair/stg/db
 
 ingress:
   host: ""
   certificateArn: ""
 
+autoscaling:
+  enabled: false
+
+migrations:
+  enabled: false
+
+networkPolicy:
+  enabled: false
+
 backup:
   enabled: false
+
+metrics:
+  serviceMonitor:
+    enabled: false
+
+secrets:
+  externalSecrets: false
+  appSecretName: africair/stg/app
+  dbSecretName: africair/stg/db

@@ -182,56 +182,7 @@ ci_role_arn         = "arn:aws:iam::<account>:role/africair-stg-ci"
 
 ---
 
-### 3. Connect to GitHub Actions
-
-The pipeline authenticates to AWS using access keys stored as GitHub Secrets.
-
-#### Get the access keys
-
-Generate access keys for your IAM user:
-
-```bash
-aws iam create-access-key --user-name landmark-eks --query 'AccessKey.[AccessKeyId,SecretAccessKey]' --output text
-```
-
-#### Add GitHub Secrets and Variables
-
-Go to your GitHub repository → **Settings → Secrets and variables → Actions**.
-
-Under the **Secrets** tab → **New repository secret** for each:
-
-| Secret | Value |
-| ------ | ----- |
-| `AWS_ACCESS_KEY_ID` | Access key ID from the command above |
-| `AWS_SECRET_ACCESS_KEY` | Secret access key from the command above |
-
-Under the **Variables** tab → **New repository variable**:
-
-| Variable | Value |
-| -------- | ----- |
-| `AWS_REGION` | `eu-west-1` |
-
-#### Trigger the pipeline
-
-Push to `main` to trigger the pipeline:
-
-```bash
-git add .
-git commit -m "trigger: deploy to staging"
-git push origin main
-```
-
-Go to **Actions** in your GitHub repository. You will see the `CI` workflow running three jobs in order:
-
-1. `test` — runs type checks and unit tests with a PostgreSQL service container
-2. `images` — builds both Docker images, pushes `:<sha>` and `:latest` to ECR
-3. `deploy` — patches `values-staging.yaml` with the ECR registry and commit SHA, then runs `helm upgrade --install` against the EKS cluster
-
-The pipeline builds and pushes the images — you do not need to build or push Docker images manually.
-
----
-
-### 4. Access the cluster and install controllers
+### 3. Access the cluster and install controllers
 
 ```bash
 aws eks update-kubeconfig --name africair-stg-cluster --region eu-west-1
@@ -278,30 +229,52 @@ Expected: both `2/2` (or `1/1`) Ready.
 
 ---
 
-### 5. Deploy the application with Helm
+### 4. Connect to GitHub Actions and deploy
 
-Patch the image values then install:
+The pipeline authenticates to AWS using access keys stored as GitHub Secrets.
 
-```bash
-sed -i "s|REGISTRY_PLACEHOLDER|$ECR|" deploy/helm/africair/values-staging.yaml
-sed -i "s|TAG_PLACEHOLDER|v1.0|" deploy/helm/africair/values-staging.yaml
-
-helm upgrade --install africair deploy/helm/africair \
-  -f deploy/helm/africair/values-staging.yaml
-```
-
-Check it:
+#### Get the access keys
 
 ```bash
-kubectl get externalsecret,pods,ingress
+aws iam create-access-key --user-name landmark-eks --query 'AccessKey.[AccessKeyId,SecretAccessKey]' --output text
 ```
 
-The ExternalSecrets show `SecretSynced`, the `africair-migrate` job completes, then two `web` and two
-`api` pods become `Running`.
+#### Add GitHub Secrets and Variables
+
+Go to your GitHub repository → **Settings → Secrets and variables → Actions**.
+
+Under the **Secrets** tab → **New repository secret** for each:
+
+| Secret | Value |
+| ------ | ----- |
+| `AWS_ACCESS_KEY_ID` | Access key ID from the command above |
+| `AWS_SECRET_ACCESS_KEY` | Secret access key from the command above |
+
+Under the **Variables** tab → **New repository variable**:
+
+| Variable | Value |
+| -------- | ----- |
+| `AWS_REGION` | `eu-west-1` |
+
+#### Trigger the pipeline
+
+```bash
+git add .
+git commit -m "trigger: deploy to staging"
+git push origin main
+```
+
+Go to **Actions** in your GitHub repository. You will see the `CI` workflow running three jobs in order:
+
+1. `test` — runs type checks and unit tests with a PostgreSQL service container
+2. `images` — builds both Docker images, pushes `:<sha>` and `:latest` to ECR
+3. `deploy` — patches `values-staging.yaml` with the ECR registry and commit SHA, then runs `helm upgrade --install` against the EKS cluster
+
+The pipeline builds and pushes the images — you do not need to build or push Docker images manually.
 
 ---
 
-### 6. Access the application
+### 5. Access the application
 
 The ALB address appears on the Ingress after 1-3 minutes:
 
@@ -326,33 +299,41 @@ aws secretsmanager get-secret-value --secret-id africair/stg/app --query SecretS
 
 ---
 
-### 7. CI/CD (optional)
+### 6. Manual deploy with Helm (optional — skip if using the pipeline)
 
-Both pipelines push images to ECR and run `helm upgrade` on `main`. They use the OIDC role from
-`terraform output ci_role_arn`, so **no AWS keys are stored**. Do steps 4 and 5 once by hand first.
+If you want to deploy without the pipeline, build and push the images first:
 
-**GitHub Actions** (`.github/workflows/ci.yml`)
+```bash
+ECR=$(aws sts get-caller-identity --query Account --output text).dkr.ecr.eu-west-1.amazonaws.com
+aws ecr get-login-password --region eu-west-1 | docker login --username AWS --password-stdin $ECR
 
-1. Settings -> Secrets and variables -> Actions -> **Variables** -> add:
-   - `AWS_ROLE_ARN` = the `ci_role_arn` output
-   - `AWS_REGION` = `eu-west-1`
-2. Push to `main`.
+docker build --platform linux/amd64 -f Dockerfile.web -t $ECR/africair-web:v1.0 .
+docker build --platform linux/amd64 -f Dockerfile.api -t $ECR/africair-api:v1.0 .
+docker push $ECR/africair-web:v1.0
+docker push $ECR/africair-api:v1.0
+```
 
-**CircleCI** (`.circleci/config.yml`)
+Then patch the values and install:
 
-1. Set up the project on circleci.com.
-2. Put the organisation ID and project ID in `terraform/stg.tfvars` (`circleci_org_id`,
-   `circleci_project_id`) and run `terraform apply -var-file=stg.tfvars` again.
-3. Organization Settings -> Contexts -> create `africair-staging` with:
-   - `AWS_ROLE_ARN` = the `ci_role_arn` output
-   - `AWS_REGION` = `eu-west-1`
-4. Push to `main`.
+```bash
+sed -i "s|REGISTRY_PLACEHOLDER|$ECR|" deploy/helm/africair/values-staging.yaml
+sed -i "s|TAG_PLACEHOLDER|v1.0|" deploy/helm/africair/values-staging.yaml
 
-Use one of the two: if both are set up, every push deploys twice.
+helm upgrade --install africair deploy/helm/africair \
+  -f deploy/helm/africair/values-staging.yaml
+```
+
+Check it:
+
+```bash
+kubectl get externalsecret,pods,ingress
+```
+
+The ExternalSecrets show `SecretSynced`, the `africair-migrate` job completes, then two `web` and two `api` pods become `Running`.
 
 ---
 
-### 8. Destroy the infrastructure
+### 7. Destroy the infrastructure
 
 Delete the app first so the Load Balancer Controller removes the ALB that Terraform did not create:
 
@@ -376,7 +357,7 @@ terraform destroy -var-file=stg.tfvars
 | ExternalSecret `SecretSyncedError` | `kubectl describe externalsecret africair-db` and `kubectl logs -n external-secrets deploy/external-secrets` |
 | Ingress has no ADDRESS | `kubectl logs -n kube-system deploy/aws-load-balancer-controller` |
 | `/api/readyz` returns 503 | The API can't reach RDS: check the `africair-db` secret and `kubectl logs deploy/africair-api` |
-| `terraform destroy` fails on the VPC | An ALB still exists: delete the Ingress (step 8), wait, retry |
+| `terraform destroy` fails on the VPC | An ALB still exists: delete the Ingress (step 7), wait, retry |
 
 > Staging shortcuts, by design: nodes in public subnets (no NAT gateway), a public EKS endpoint (limit
 > it with `api_allowed_cidrs`), mutable image tags, and secrets in the local Terraform state.
