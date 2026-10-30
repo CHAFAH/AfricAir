@@ -184,18 +184,36 @@ ci_role_arn         = "arn:aws:iam::<account>:role/africair-stg-ci"
 
 ### 3. Connect to GitHub Actions
 
-The pipeline uses OIDC to assume an AWS IAM role — **no AWS access keys are stored in GitHub**. GitHub exchanges a short-lived OIDC token for temporary AWS credentials by assuming the CI role that Terraform created.
+The pipeline authenticates to AWS using access keys stored as GitHub Secrets.
 
-Go to your GitHub repository → **Settings → Secrets and variables → Actions → Variables** tab → **New repository variable** for each:
+#### Get the access keys
 
-| Variable | Value | How to get it |
-| -------- | ----- | ------------- |
-| `AWS_ROLE_ARN` | `arn:aws:iam::<account>:role/africair-stg-ci` | `cd terraform && terraform output ci_role_arn` |
-| `AWS_REGION` | `eu-west-1` | the region you deployed to |
+Generate access keys for your IAM user:
 
-> These are **Variables** (not Secrets) because they are not sensitive. No AWS access keys are needed or stored anywhere.
+```bash
+aws iam create-access-key --user-name landmark-eks --query 'AccessKey.[AccessKeyId,SecretAccessKey]' --output text
+```
 
-Once the variables are set, push to `main` to trigger the pipeline:
+#### Add GitHub Secrets and Variables
+
+Go to your GitHub repository → **Settings → Secrets and variables → Actions**.
+
+Under the **Secrets** tab → **New repository secret** for each:
+
+| Secret | Value |
+| ------ | ----- |
+| `AWS_ACCESS_KEY_ID` | Access key ID from the command above |
+| `AWS_SECRET_ACCESS_KEY` | Secret access key from the command above |
+
+Under the **Variables** tab → **New repository variable**:
+
+| Variable | Value |
+| -------- | ----- |
+| `AWS_REGION` | `eu-west-1` |
+
+#### Trigger the pipeline
+
+Push to `main` to trigger the pipeline:
 
 ```bash
 git add .
