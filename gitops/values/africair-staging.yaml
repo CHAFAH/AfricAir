@@ -2,7 +2,7 @@ gitops:
   enabled: true
 
 image:
-  tag: "0000000000000000000000000000000000000000"
+  tag: "adb92c7d76da9d2a2ee87aced726b87800170fda"
 
 web:
   replicas: 1
